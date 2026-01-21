@@ -10,6 +10,8 @@ uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
+    df = df.astype(str)
+
 
     st.subheader("Data Preview")
     st.dataframe(df)
