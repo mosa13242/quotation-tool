@@ -17,6 +17,9 @@ if uploaded_file:
     st.dataframe(df)
 
     if "Price" in df.columns:
-        total = df["Price"].sum()
-        st.subheader("Total Price")
-        st.success(f"{total:,.2f}")
+    df["Price_numeric"] = pd.to_numeric(df["Price"], errors="coerce")
+    total = df["Price_numeric"].sum()
+
+    st.subheader("Total Price")
+    st.success(f"{total:,.2f}")
+
