@@ -1,51 +1,64 @@
 import streamlit as st
 import pandas as pd
+import difflib  # مكتبة للمقارنة التقريبية للنصوص
 
 st.set_page_config(page_title="Quotation Tool", layout="wide")
 
 st.title("Quotation Tool")
 st.write("Upload Excel or PDF file (Item + Quantity)")
 
-# تحميل الملف
 uploaded_file = st.file_uploader("Upload Quotation File", type=["xlsx", "pdf"])
+
+def find_best_match(target, columns):
+    """دالة للبحث عن أقرب اسم عمود موجود في الملف"""
+    # تحويل الكل لحروف صغيرة لتسهيل البحث
+    columns_lower = [c.lower() for c in columns]
+    target_lower = target.lower()
+    
+    # البحث عن تطابق مباشر أولاً
+    if target_lower in columns_lower:
+        return columns[columns_lower.index(target_lower)]
+    
+    # إذا لم يوجد تطابق مباشر، نبحث عن أقرب كلمة (مثل Unit بدلاً من Unit_Price)
+    matches = difflib.get_close_matches(target_lower, columns_lower, n=1, cutoff=0.3)
+    if matches:
+        return columns[columns_lower.index(matches[0])]
+    
+    # بحث إضافي إذا كانت الكلمة الهدف جزء من اسم العمود (مثل 'Price' موجودة في 'Unit Price')
+    for col in columns:
+        if target_lower in col.lower() or col.lower() in target_lower:
+            return col
+    return None
 
 if uploaded_file is not None:
     try:
-        # قراءة ملف الإكسل
         if uploaded_file.name.endswith('.xlsx'):
-            quote_df = pd.read_excel(uploaded_file)
+            df = pd.read_excel(uploaded_file)
+            df.columns = df.columns.astype(str).str.strip() # تنظيف الأسماء
             
-            # 1. تنظيف أسماء الأعمدة (إزالة المسافات الزائدة وتحويلها لنص موحد)
-            quote_df.columns = quote_df.columns.str.strip()
+            # تحديد الأعمدة المطلوبة بالبحث التقريبي
+            col_quantity = find_best_match("Quantity", df.columns)
+            col_unit_price = find_best_match("Unit Price", df.columns)
             
-            # 2. عرض الأعمدة الموجودة للتأكد (اختياري - يمكنك حذفه لاحقاً)
-            st.write("Columns found in file:", list(quote_df.columns))
-            
-            # 3. التحقق من وجود الأعمدة المطلوبة قبل الحساب
-            required_cols = ["Quantity", "Unit_Price"]
-            
-            # فحص إذا كانت الأعمدة موجودة (حتى لو كانت بحروف صغيرة)
-            # سنقوم بتحويل أسماء الأعمدة كلها لحروف كبيرة لتسهيل المقارنة
-            col_map = {col.lower(): col for col in quote_df.columns}
-            
-            if "quantity" in col_map and "unit_price" in col_map:
-                q_col = col_map["quantity"]
-                p_col = col_map["unit_price"]
+            if col_quantity and col_unit_price:
+                st.success(f"تم الربط تلقائياً: الكمية ({col_quantity})، السعر ({col_unit_price})")
+                
+                # تحويل البيانات لأرقام لضمان الحساب الصحيح
+                df[col_quantity] = pd.to_numeric(df[col_quantity], errors='coerce').fillna(0)
+                df[col_unit_price] = pd.to_numeric(df[col_unit_price], errors='coerce').fillna(0)
                 
                 # إجراء العملية الحسابية
-                quote_df["Subtotal"] = quote_df[q_col] * quote_df[p_col]
+                df["Subtotal"] = df[col_quantity] * df[col_unit_price]
                 
-                st.success("Calculation successful!")
-                st.dataframe(quote_df)
+                st.dataframe(df)
             else:
-                st.error(f"Missing columns! Make sure the file has: {required_cols}")
-                st.info(f"Available columns are: {list(quote_df.columns)}")
+                st.error("لم أتمكن من العثور على أعمدة الكمية أو السعر بشكل تلقائي.")
+                st.info(f"الأعمدة المكتشفة في ملفك هي: {list(df.columns)}")
 
         elif uploaded_file.name.endswith('.pdf'):
-            st.info("PDF processing logic goes here...")
+            st.info("جاري العمل على دعم ملفات PDF...")
 
     except Exception as e:
-        st.error(f"An error occurred: {e}")
-
+        st.error(f"حدث خطأ أثناء المعالجة: {e}")
 else:
-    st.info("Please upload an Excel file to start.")
+    st.info("يرجى رفع ملف إكسل للبدء.")
