@@ -4,9 +4,9 @@ import os
 from thefuzz import fuzz, process
 
 st.set_page_config(layout="wide")
-st.title("💰 نظام التسعير (رفع ملف + بحث)")
+st.title("💰 نظام التسعير والبحث الذكي")
 
-# 1. زر الرفع يظهر أولاً دائماً
+# 1. زر الرفع يظهر أولاً لضمان عدم اختفائه
 uploaded_file = st.file_uploader("📥 ارفع ملف الإكسيل هنا", type=["xlsx"])
 
 MASTER_FILE = "master_list.xlsx"
@@ -25,31 +25,30 @@ if uploaded_file:
         df_client = pd.read_excel(uploaded_file)
         df_client.columns = [str(c).strip() for c in df_client.columns]
         
-        # اختيار الأعمدة
         col1, col2 = st.columns(2)
         with col1:
-            c_item = st.selectbox("عمود الصنف (طلبك):", df_client.columns)
-            c_qty = st.selectbox("عمود الكمية (طلبك):", df_client.columns)
+            c_item = st.selectbox("عمود الصنف (طلب العميل):", df_client.columns)
+            c_qty = st.selectbox("عمود الكمية (طلب العميل):", df_client.columns)
         with col2:
-            m_item = st.selectbox("الصنف (الماستر):", master_df.columns if not master_df.empty else ["Item"])
-            m_price = st.selectbox("السعر (الماستر):", master_df.columns if not master_df.empty else ["Price"])
+            m_item = st.selectbox("الصنف (في الماستر):", master_df.columns if not master_df.empty else ["Item"])
+            m_price = st.selectbox("السعر (في الماستر):", master_df.columns if not master_df.empty else ["Price"])
 
         if st.button("🔍 تنفيذ المطابقة الذكية"):
-            def match_it(text):
+            def match_logic(text):
                 if not master_names: return str(text)
                 match, score = process.extractOne(str(text), master_names, scorer=fuzz.token_set_ratio)
                 return match if score > 70 else str(text)
 
-            # توزيع البيانات حسب طلبك
-            df_client['Item'] = df_client[c_item] # الصنف المطلوب
-            df_client['REMARKS'] = df_client[c_item].apply(match_it) # المطابقة والبحث
+            # توزيع البيانات: الأصلي في Item والمقترح في REMARKS
+            df_client['Item'] = df_client[c_item]
+            df_client['REMARKS'] = df_client[c_item].apply(match_logic)
             
             p_map = dict(zip(master_df[m_item], master_df[m_price]))
             df_client['Unit_Price'] = df_client['REMARKS'].map(p_map).fillna(0.0)
             st.session_state['v_priced'] = df_client[['Item', 'REMARKS', c_qty, 'Unit_Price']]
 
         if 'v_priced' in st.session_state:
-            # جدول بسيط جداً لتجنب أخطاء TypeError
+            # جدول التعديل المستقر بدون الخصائص المسببة للخطأ
             edited_df = st.data_editor(
                 st.session_state['v_priced'],
                 column_config={
@@ -62,24 +61,24 @@ if uploaded_file:
 
             if st.button("🚀 اعتماد وحفظ الأصناف الجديدة"):
                 m_curr, m_names_curr = get_master()
-                new_data = []
+                to_add = []
                 for _, row in edited_df.iterrows():
                     name = str(row['REMARKS']).strip()
                     price = float(row['Unit_Price'])
+                    # إضافة الصنف للماستر إذا لم يكن موجوداً
                     if name != "" and name not in m_names_curr:
-                        new_data.append({m_item: name, m_price: price})
+                        to_add.append({m_item: name, m_price: price})
                         m_names_curr.append(name)
                 
-                if new_data:
-                    pd.concat([m_curr, pd.DataFrame(new_data)], ignore_index=True).to_excel(MASTER_FILE, index=False)
-                    st.success("✅ تم تحديث الماستر لست بالأصناف والأسعار الجديدة!")
-                
-                # عرض الحسابات
+                if to_add:
+                    pd.concat([m_curr, pd.DataFrame(to_add)], ignore_index=True).to_excel(MASTER_FILE, index=False)
+                    st.success("✅ تم تحديث الماستر بالأصناف والأسعار الجديدة!")
+
+                # الحساب النهائي
                 edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
                 edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
                 st.dataframe(edited_df, use_container_width=True)
-                st.metric("الإجمالي", f"{edited_df['Total'].sum():,.2f}")
+                st.metric("الإجمالي الكلي", f"{edited_df['Total'].sum():,.2f} EGP")
 
     except Exception as e:
         st.error(f"حدث خطأ: {e}")
-
