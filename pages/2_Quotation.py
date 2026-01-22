@@ -1,77 +1,95 @@
 import streamlit as st
 import pandas as pd
+import os
+from thefuzz import fuzz, process
 
-# ===============================
-# Page config
-# ===============================
-st.set_page_config(
-    page_title="Quotation",
-    layout="wide"
-)
+st.set_page_config(page_title="نظام التسعير المستقر", layout="wide")
 
-# ===============================
-# Title
-# ===============================
-st.title("Quotation")
+MASTER_FILE = "master_list.xlsx"
 
-st.info("💡 اكتب الملاحظات يدويًا في خانة REMARKS")
+# وظيفة تحميل الماستر بأمان وتحديث قائمة الأسماء للبحث
+def get_safe_master():
+    if not os.path.exists(MASTER_FILE):
+        df = pd.DataFrame(columns=["Item", "Price"])
+        df.to_excel(MASTER_FILE, index=False)
+        return df, []
+    df = pd.read_excel(MASTER_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+    # قائمة الأسماء لاستخدامها في ميزة البحث (Suggestions)
+    names = df[df.columns[0]].astype(str).tolist()
+    return df, names
 
-# ===============================
-# Initialize data
-# ===============================
-if "quotation_df" not in st.session_state:
-    st.session_state.quotation_df = pd.DataFrame(
-        {
-            "Item": [""],
-            "REMARKS": [""],
-            "Quantity": [1],
-            "Unit Price": [0.0],
-        }
-    )
+master_df, master_names = get_safe_master()
 
-df = st.session_state.quotation_df
+st.title("🛡️ نظام التسعير (بحث + إضافة + حفظ)")
 
-# ===============================
-# Data editor
-# ===============================
-edited_df = st.data_editor(
-    df,
-    num_rows="dynamic",
-    use_container_width=True,
-    column_config={
-        "Item": st.column_config.TextColumn(
-            label="Item",
-            disabled=True
-        ),
-        "REMARKS": st.column_config.TextColumn(
-            label="REMARKS",
-            help="اكتب الملاحظات أو الوصف يدويًا"
-        ),
-        "Quantity": st.column_config.NumberColumn(
-            label="Quantity",
-            min_value=0,
-            step=1
-        ),
-        "Unit Price": st.column_config.NumberColumn(
-            label="Unit Price",
-            min_value=0.0,
-            step=0.01,
-            format="%.2f"
-        ),
-    }
-)
+uploaded_file = st.file_uploader("ارفع طلب العميل (Excel)", type=["xlsx"])
 
-st.session_state.quotation_df = edited_df
+if uploaded_file:
+    df_client = pd.read_excel(uploaded_file)
+    df_client.columns = [str(c).strip() for c in df_client.columns]
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        c_item = st.selectbox("عمود الصنف (طلبك):", df_client.columns)
+        c_qty = st.selectbox("عمود الكمية (طلبك):", df_client.columns)
+    with col2:
+        m_item = st.selectbox("عمود الصنف (الماستر):", master_df.columns if not master_df.empty else ["Item"])
+        m_price = st.selectbox("عمود السعر (الماستر):", master_df.columns if not master_df.empty else ["Price"])
 
-# ===============================
-# Calculation
-# ===============================
-if not edited_df.empty:
-    edited_df["Total"] = edited_df["Quantity"] * edited_df["Unit Price"]
+    if st.button("🔍 تنفيذ المطابقة والبحث الذكي"):
+        def find_match(text):
+            if not master_names: return str(text)
+            match, score = process.extractOne(str(text), master_names, scorer=fuzz.token_set_ratio)
+            return match if score > 70 else str(text)
 
-    st.subheader("Summary")
-    st.dataframe(edited_df, use_container_width=True)
+        df_client['REMARKS'] = df_client[c_item].apply(find_match)
+        price_map = dict(zip(master_df[m_item], master_df[m_price]))
+        df_client['Unit_Price'] = df_client['REMARKS'].map(price_map).fillna(0.0)
+        st.session_state['df_current'] = df_client
 
-    st.success(
-        f"Grand Total: {edited
+    if 'df_current' in st.session_state:
+        st.info("💡 البحث: ابدأ الكتابة في REMARKS لتظهر الاقتراحات؛ الأسماء والأسعار الجديدة ستحفظ تلقائياً.")
+        
+        # استخدام TextColumn بشكل صحيح لمنع الانهيار وتفعيل البحث
+        edited_df = st.data_editor(
+            st.session_state['df_current'],
+            column_config={
+                "REMARKS": st.column_config.TextColumn(
+                    "الصنف (بحث أو إضافة)",
+                    suggestions=master_names,
+                    width="large"
+                ),
+                "Unit_Price": st.column_config.NumberColumn(
+                    "السعر", 
+                    format="%.2f",
+                    min_value=0.0
+                )
+            },
+            disabled=[c_item, c_qty],
+            use_container_width=True,
+            key="final_v_100"
+        )
+
+        if st.button("🚀 اعتماد وحفظ الأصناف الجديدة في الماستر"):
+            new_data_rows = []
+            f_master, f_names = get_safe_master()
+            
+            for idx, row in edited_df.iterrows():
+                row_name = str(row['REMARKS']).strip()
+                row_price = float(row['Unit_Price'])
+                
+                # حفظ الصنف الجديد مع سعره اليدوي في الماستر
+                if row_name not in f_names and row_name != "":
+                    new_data_rows.append({m_item: row_name, m_price: row_price})
+                    f_names.append(row_name)
+
+            if new_data_rows:
+                updated_master = pd.concat([f_master, pd.DataFrame(new_data_rows)], ignore_index=True)
+                updated_master.to_excel(MASTER_FILE, index=False)
+                st.success(f"✅ تم تسجيل {len(new_data_rows)} صنف وسعر جديد في الماستر!")
+
+            # تحديث الحسابات النهائية للعرض
+            edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
+            edited_df['Total'] = edited_df[c_qty] * edited_df['
 
