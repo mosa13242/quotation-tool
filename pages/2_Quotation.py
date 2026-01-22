@@ -1,83 +1,82 @@
 import streamlit as st
 import pandas as pd
 import os
-import pdfplumber
-import difflib
+from pdf2image import convert_from_bytes
+import pytesseract
+import numpy as np
+from PIL import Image
 
-st.set_page_config(page_title="نظام التسعير النهائي", layout="wide")
+st.set_page_config(page_title="نظام التسعير بالذكاء الاصطناعي", layout="wide")
 
-# 1. تحميل قائمة الأسعار (Master List)
+# 1. تحميل الماستر ليست (معالجة أخطاء التسمية)
 MASTER_FILE = "master_list.xlsx"
 if not os.path.exists(MASTER_FILE):
-    st.error("❌ ملف master_list.xlsx غير موجود.")
+    st.error("❌ ارفع ملف الأسعار أولاً في صفحة Master List.")
     st.stop()
 
 master_df = pd.read_excel(MASTER_FILE)
 master_df.columns = [str(c).strip() for c in master_df.columns]
 
-st.title("💰 نظام التسعير التلقائي (إصدار الحماية من الأخطاء)")
+st.title("📸 تسعير ملفات الصور والـ PDF")
 
-# 2. رفع ملف العميل
-uploaded_file = st.file_uploader("ارفع طلب العميل (Excel أو PDF)", type=["xlsx", "pdf"])
+uploaded_file = st.file_uploader("ارفع طلب العميل (صور أو PDF ممسوح)", type=["xlsx", "pdf", "png", "jpg"])
 
 if uploaded_file:
     df_client = pd.DataFrame()
-    if uploaded_file.name.endswith('.xlsx'):
+
+    if uploaded_file.name.lower().endswith(('.pdf', '.png', '.jpg')):
+        with st.spinner("🔍 جاري تحليل الصورة واستخراج النصوص..."):
+            try:
+                # إذا كان PDF نحوله لصور أولاً
+                if uploaded_file.name.lower().endswith('.pdf'):
+                    images = convert_from_bytes(uploaded_file.read())
+                else:
+                    images = [Image.open(uploaded_file)]
+
+                all_text = ""
+                for img in images:
+                    # تحويل الصورة لنص (يدعم العربية والإنجليزية)
+                    text = pytesseract.image_to_string(img, lang='eng+ara')
+                    all_text += text + "\n"
+                
+                # تحويل النص المستخرج إلى جدول بسيط (تجريبي)
+                lines = [line.strip() for line in all_text.split('\n') if line.strip()]
+                df_client = pd.DataFrame(lines, columns=["Extracted_Text"])
+                st.info("💡 تم استخراج النصوص. اختر العمود الذي يحتوي على اسم الصنف.")
+            except Exception as e:
+                st.error(f"حدث خطأ في قراءة الصورة: {e}")
+    
+    elif uploaded_file.name.lower().endswith('.xlsx'):
         df_client = pd.read_excel(uploaded_file)
-    elif uploaded_file.name.endswith('.pdf'):
-        with pdfplumber.open(uploaded_file) as pdf:
-            all_rows = []
-            for page in pdf.pages:
-                table = page.extract_table()
-                if table: all_rows.extend(table)
-            if all_rows:
-                df_client = pd.DataFrame(all_rows[1:], columns=all_rows[0])
 
     if not df_client.empty:
         df_client.columns = [str(c).strip() for c in df_client.columns]
         
-        # --- واجهة اختيار الأعمدة ---
-        st.subheader("⚙️ إعدادات الربط")
+        # إعدادات الربط
+        st.subheader("⚙️ إعدادات المطابقة")
         c1, c2 = st.columns(2)
         with c1:
-            client_item_col = st.selectbox("عمود الصنف (عندك):", df_client.columns)
-            client_qty_col = st.selectbox("عمود الكمية (عندك):", df_client.columns)
+            item_col = st.selectbox("عمود الصنف المستخرج:", df_client.columns)
+            qty_col = st.number_input("الكمية الافتراضية (لأن الصور قد لا تقرأ الأرقام بدقة):", value=1)
         with c2:
-            master_item_col = st.selectbox("عمود الصنف (في الماستر):", master_df.columns)
-            master_price_col = st.selectbox("عمود السعر (في الماستر):", master_df.columns)
+            m_item = st.selectbox("عمود الصنف في الماستر:", master_df.columns)
+            m_price = st.selectbox("عمود السعر في الماستر:", master_df.columns)
 
-        match_type = st.radio("نوع المطابقة:", ["تطابق تام (كلمة بكلمة)", "تطابق ذكي (دقة عالية)"])
-
-        if st.button("🚀 تنفيذ التسعير"):
-            # تنظيف البيانات
-            df_client[client_item_col] = df_client[client_item_col].astype(str).str.strip()
-            master_df[master_item_col] = master_df[master_item_col].astype(str).str.strip()
-
-            # --- عملية الدمج الذكية ---
-            if match_type == "تطابق تام (كلمة بكلمة)":
-                # ندمج ونجلب فقط عمود السعر من الماستر ونعطيه اسماً فريداً فوراً
-                final_df = df_client.copy()
-                price_mapping = master_df.set_index(master_item_col)[master_price_col].to_dict()
-                final_df['Target_Price'] = final_df[client_item_col].map(price_mapping)
+        if st.button("🚀 تسعير البيانات المستخرجة"):
+            # تنظيف البيانات لضمان تطابق تام (Exact Match)
+            # تم إلغاء المطابقة المرنة لمنع أخطاء مثل Television
+            price_map = dict(zip(master_df[m_item].astype(str).str.strip(), master_df[m_price]))
+            
+            df_client['Matched_Price'] = df_client[item_col].astype(str).str.strip().map(price_map)
+            df_client['Matched_Price'] = pd.to_numeric(df_client['Matched_Price'], errors='coerce').fillna(0)
+            df_client['Total'] = qty_col * df_client['Matched_Price']
+            
+            # إخفاء الصفوف التي لم يتم العثور على سعر لها لتقليل الفوضى
+            final_display = df_client[df_client['Matched_Price'] > 0]
+            
+            if not final_display.empty:
+                st.success(f"✅ تم العثور على {len(final_display)} صنف مطابق.")
+                st.dataframe(final_display, use_container_width=True)
+                st.metric("الإجمالي", f"{final_display['Total'].sum():,.2f} EGP")
             else:
-                # مطابقة ذكية صارمة
-                master_names = master_df[master_item_col].unique().tolist()
-                def get_match(x):
-                    m = difflib.get_close_matches(str(x), master_names, n=1, cutoff=0.9)
-                    return m[0] if m else None
-                
-                df_client['Matched_Name'] = df_client[client_item_col].apply(get_match)
-                final_df = pd.merge(df_client, master_df[[master_item_col, master_price_col]], 
-                                    left_on='Matched_Name', right_on=master_item_col, how='left')
-                # إعادة تسمية عمود السعر لضمان عدم حدوث KeyError
-                final_df = final_df.rename(columns={master_price_col: 'Target_Price'})
-
-            # --- الحسابات النهائية (باستخدام الاسم الجديد المضمون) ---
-            final_df['Target_Price'] = pd.to_numeric(final_df['Target_Price'], errors='coerce').fillna(0)
-            final_df[client_qty_col] = pd.to_numeric(final_df[client_qty_col], errors='coerce').fillna(0)
-            
-            final_df["Subtotal"] = final_df[client_qty_col] * final_df['Target_Price']
-            
-            st.success("✅ تمت العملية بنجاح دون أخطاء")
-            st.dataframe(final_df)
-            st.metric("إجمالي الفاتورة", f"{final_df['Subtotal'].sum():,.2f} EGP")
+                st.warning("⚠️ لم يتم العثور على تطابق تام. تأكد أن الأسماء في الصورة مطابقة تماماً للماستر ليست.")
