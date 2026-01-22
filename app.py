@@ -71,7 +71,7 @@ if uploaded_file:
 if "df_work" in st.session_state:
     st.subheader("✏️ التعديل النهائي")
 
-   edited_df = st.data_editor(
+edited_df = st.data_editor(
     st.session_state.df_work,
     column_config={
         "REMARKS": st.column_config.TextColumn(
