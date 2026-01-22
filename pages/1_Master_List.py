@@ -14,5 +14,5 @@ try:
         edited_master.to_excel("master_list.xlsx", index=False)
         st.success("تم التحديث!")
 except Exception as e:
-    st.error("خطأ في تحميل ملف الماستر. تأكد من وجوده."
+    st.error("خطأ في تحميل ملف الماستر. تأكد من وجوده.")
 
