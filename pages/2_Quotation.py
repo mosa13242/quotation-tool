@@ -32,8 +32,8 @@ if uploaded_file:
         c_item = st.selectbox("عمود الصنف (عندك):", df_client.columns)
         c_qty = st.selectbox("عمود الكمية (عندك):", df_client.columns)
     with col2:
-        m_item = st.selectbox("عمود الصنف (الماستر):", master_df.columns)
-        m_price = st.selectbox("عمود السعر (الماستر):", master_df.columns)
+        m_item = st.selectbox("عمود الصنف (الماستر):", master_df.columns if not master_df.empty else ["Item"])
+        m_price = st.selectbox("عمود السعر (الماستر):", master_df.columns if not master_df.empty else ["Price"])
 
     if st.button("🔍 تنفيذ المطابقة"):
         def smart_match(text):
@@ -49,15 +49,14 @@ if uploaded_file:
     if 'pricing_df' in st.session_state:
         st.success("💡 ميزة البحث: ابدأ الكتابة في REMARKS وستظهر لك اقتراحات الماستر.")
         
-        # هنا دمجنا البحث (suggestions) مع الكتابة الحرة (TextColumn)
+        # دمج البحث مع الكتابة الحرة باستخدام TextColumn مع Suggestions
         edited_df = st.data_editor(
             st.session_state['pricing_df'],
             column_config={
                 "REMARKS": st.column_config.TextColumn(
-                    "الصنف (بحث أو كتابة جديد)",
-                    suggestions=master_names,  # هذا هو عمود البحث
-                    width="large",
-                    required=True
+                    "الصنف (ابحث أو اكتب جديداً)",
+                    suggestions=master_names,  # تفعيل قائمة البحث
+                    width="large"
                 ),
                 "Unit_Price": st.column_config.NumberColumn(
                     "السعر (تعديل)", 
@@ -78,7 +77,7 @@ if uploaded_file:
                 name_val = str(row['REMARKS']).strip()
                 price_val = float(row['Unit_Price'])
                 
-                # إذا كتبت صنفاً جديداً غير موجود في الماستر
+                # حفظ الصنف الجديد مع سعره المكتوب يدوياً
                 if name_val not in fresh_names and name_val != "":
                     new_items_found.append({m_item: name_val, m_price: price_val})
                     fresh_names.append(name_val)
@@ -87,9 +86,9 @@ if uploaded_file:
                 new_data = pd.DataFrame(new_items_found)
                 updated_master = pd.concat([fresh_master, new_data], ignore_index=True)
                 updated_master.to_excel(MASTER_FILE, index=False)
-                st.success(f"✅ تم حفظ {len(new_items_found)} صنف جديد بأسعارهم!")
+                st.success(f"✅ تم حفظ {len(new_items_found)} صنف جديد بأسعارهم في الماستر!")
 
-            # تحديث الحسابات النهائية
+            # تحديث الحسابات النهائية للعرض
             edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
             edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
             st.dataframe(edited_df, use_container_width=True)
