@@ -5,72 +5,110 @@ import sqlite3
 st.set_page_config(page_title="Quotation", layout="wide")
 st.title("Quotation")
 
-# الاتصال بقاعدة البيانات
-conn = sqlite3.connect("data.db", check_same_thread=False)
+# =========================
+# Database connection
+# =========================
+conn = sqlite3.connect("quotation.db", check_same_thread=False)
 
-# تحميل Master List
-master_df = pd.read_sql("SELECT * FROM master_items", conn)
-
-# رفع ملف التسعير
+# =========================
+# Upload quotation excel
+# =========================
 uploaded_file = st.file_uploader(
     "Upload Quotation Excel (Item + Quantity فقط)",
     type=["xlsx"]
 )
 
 if uploaded_file:
-    quote_df = pd.read_excel(uploaded_file)
+    # =========================
+    # Read Excel
+    # =========================
+    df = pd.read_excel(uploaded_file)
+    df.columns = df.columns.str.strip()
 
-    required_cols = {"Item", "Quantity"}
-    if not required_cols.issubset(quote_df.columns):
-        st.error("Excel لازم يحتوي على عمودين فقط: Item و Quantity")
+    # =========================
+    # Detect columns automatically
+    # =========================
+    cols_lower = {c.lower(): c for c in df.columns}
+
+    # Item column
+    if "item" in cols_lower:
+        item_col = cols_lower["item"]
+    elif "product" in cols_lower:
+        item_col = cols_lower["product"]
+    else:
+        st.error("Excel must contain column: Item")
         st.stop()
 
-    # دمج مع Master List
-    merged = quote_df.merge(
-        master_df,
-        on="Item",
-        how="left",
-        indicator=True
+    # Quantity column
+    if "quantity" in cols_lower:
+        qty_col = cols_lower["quantity"]
+    elif "qty" in cols_lower:
+        qty_col = cols_lower["qty"]
+    else:
+        st.error("Excel must contain column: Quantity or Qty")
+        st.stop()
+
+    df = df.rename(columns={
+        item_col: "Item",
+        qty_col: "Quantity"
+    })
+
+    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
+
+    # =========================
+    # Load master list
+    # =========================
+    master_df = pd.read_sql(
+        "SELECT Item, Unit, Unit_Price, VAT_Percent FROM master_items",
+        conn
     )
 
-    # أصناف مش موجودة
-    missing_items = merged[merged["_merge"] == "left_only"]["Item"].tolist()
+    # =========================
+    # Merge
+    # =========================
+    merged = df.merge(master_df, on="Item", how="left")
 
-    if missing_items:
-        st.warning("الأصناف دي مش موجودة في Master List:")
-        st.write(missing_items)
-
-    # حذف اللي مش موجود
-    merged = merged[merged["_merge"] == "both"]
-
-    # تحويل أرقام
-    merged["Quantity"] = pd.to_numeric(merged["Quantity"], errors="coerce").fillna(0)
+    # =========================
+    # Calculations
+    # =========================
     merged["Unit_Price"] = pd.to_numeric(merged["Unit_Price"], errors="coerce").fillna(0)
     merged["VAT_Percent"] = pd.to_numeric(merged["VAT_Percent"], errors="coerce").fillna(0)
 
-    # حسابات
     merged["Total_Before_VAT"] = merged["Quantity"] * merged["Unit_Price"]
-    merged["VAT_Amount"] = merged["Total_Before_VAT"] * merged["VAT_Percent"] / 100
+    merged["VAT_Amount"] = merged["Total_Before_VAT"] * (merged["VAT_Percent"] / 100)
     merged["Total_After_VAT"] = merged["Total_Before_VAT"] + merged["VAT_Amount"]
 
-    # ترتيب الأعمدة
-    final_df = merged[
-        [
-            "Item",
-            "Quantity",
-            "Unit",
-            "Unit_Price",
-            "VAT_Percent",
-            "Total_Before_VAT",
-            "VAT_Amount",
-            "Total_After_VAT",
-        ]
-    ]
-
+    # =========================
+    # Display result
+    # =========================
     st.subheader("Quotation Result")
-    st.dataframe(final_df, use_container_width=True)
+    st.dataframe(merged, use_container_width=True)
 
-    st.subheader("Grand Totals")
-    st.success(f"Total Before VAT: {final_df['Total_Before_VAT'].sum():,.2f}")
-    st.success(f"VAT: {final_df['VAT_Amount'].sum():,.2f}")
-    st.success(f"Total After VAT: {final_df['Total_After_VAT'].sum():,.2f}")
+    # =========================
+    # Summary
+    # =========================
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "Total Before VAT",
+        f"{merged['Total_Before_VAT'].sum():,.2f}"
+    )
+    col2.metric(
+        "VAT Amount",
+        f"{merged['VAT_Amount'].sum():,.2f}"
+    )
+    col3.metric(
+        "Grand Total",
+        f"{merged['Total_After_VAT'].sum():,.2f}"
+    )
+
+    # =========================
+    # Download Excel
+    # =========================
+    output = merged.copy()
+    st.download_button(
+        "Download Quotation Excel",
+        data=output.to_excel(index=False),
+        file_name="Quotation.xlsx"
+    )
+
