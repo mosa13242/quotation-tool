@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import os
 
-st.set_page_config(page_title="نظام التسعير الذكي", layout="wide")
+st.set_page_config(page_title="نظام التسعير المتكامل", layout="wide")
 
-MASTER_FILE = "master_list.xlsx"
+st.title("👋 أهلاً بك في نظام إدارة الأسعار")
+st.write("استخدم القائمة الجانبية للتحكم في الماستر لست أو لتسعير طلبات العملاء.")
 
-# التأكد من وجود ملف الماستر عند التشغيل لأول مرة
-if not os.path.exists(MASTER_FILE):
+# إنشاء ملف الماستر إذا لم يكن موجوداً
+if not os.path.exists("master_list.xlsx"):
     df = pd.DataFrame(columns=["Item", "Price"])
-    df.to_excel(MASTER_FILE, index=False)
-
-st.title("🛡️ نظام إدارة التسعير المتكامل")
-st.write("استخدم القائمة الجانبية للوصول إلى أدوات التسعير.")
+    df.to_excel("master_list.xlsx", index=False)
+    st.info("تم إنشاء ملف master_list.xlsx جديد.")
