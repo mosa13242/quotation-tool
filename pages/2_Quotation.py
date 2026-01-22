@@ -4,62 +4,65 @@ import difflib
 
 st.set_page_config(page_title="Quotation Tool", layout="wide")
 
-st.title("Quotation Tool 2.0")
+st.title("Quotation Tool 2.0 (Auto-Pricing)")
+
+# 1. تحميل ملف الـ Master List أولاً (يفترض وجوده في مسار معين أو رفعه)
+# يمكنك تغيير المسار للملف الفعلي عندك
+MASTER_LIST_PATH = "master_list.xlsx" 
+
+try:
+    master_df = pd.read_excel(MASTER_LIST_PATH)
+    master_df.columns = master_df.columns.astype(str).str.strip()
+    st.sidebar.success("✅ تم تحميل قائمة الأسعار (Master List)")
+except:
+    st.sidebar.error("❌ لم يتم العثور على ملف master_list.xlsx")
+    master_df = None
 
 uploaded_file = st.file_uploader("Upload Quotation File", type=["xlsx"])
 
-def find_best_columns(columns):
-    """تخمين أعمدة الكمية والسعر من القائمة"""
-    col_map = {"qty": None, "price": None}
-    
-    # كلمات دالة للبحث عنها
-    qty_keywords = ['quantity', 'qty', 'الكمية', 'العدد', 'count']
-    price_keywords = ['price', 'unit price', 'rate', 'cost', 'السعر', 'سعر الوحدة', 'unit_price']
-
-    for col in columns:
-        c_low = str(col).lower().strip()
-        # فحص الكمية
-        if any(k in c_low for k in qty_keywords) and not col_map["qty"]:
-            col_map["qty"] = col
-        # فحص السعر (نتجنب كلمة Unit إذا كانت تعني وحدة القياس مثل Box/Pcs)
-        if any(k in c_low for k in price_keywords) and not col_map["price"]:
-            col_map["price"] = col
-            
-    return col_map
-
-if uploaded_file:
+if uploaded_file and master_df is not None:
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = df.columns.astype(str).str.strip()
         
-        # تخمين الأعمدة
-        matches = find_best_columns(df.columns)
-        
-        st.subheader("إعدادات الأعمدة")
+        st.subheader("إعدادات الربط")
         col1, col2 = st.columns(2)
         
         with col1:
-            selected_qty = st.selectbox("اختر عمود الكمية:", df.columns, 
-                                        index=list(df.columns).index(matches["qty"]) if matches["qty"] else 0)
+            item_col = st.selectbox("اختر عمود اسم الدواء (في ملفك):", df.columns)
         with col2:
-            # هنا يمكنك اختيار العمود الذي يحتوي على "السعر" فعلياً إذا كان 'Unit' خطأ
-            selected_price = st.selectbox("اختر عمود السعر:", df.columns, 
-                                          index=list(df.columns).index(matches["price"]) if matches["price"] else 0)
+            master_item_col = st.selectbox("اختر عمود اسم الدواء (في Master List):", master_df.columns)
+            master_price_col = st.selectbox("اختر عمود السعر (في Master List):", master_df.columns)
 
-        if st.button("تحديث الحسابات"):
-            # تحويل للرقميات مع معالجة القيم الفارغة
-            df[selected_qty] = pd.to_numeric(df[selected_qty], errors='coerce').fillna(0)
-            df[selected_price] = pd.to_numeric(df[selected_price], errors='coerce').fillna(0)
+        if st.button("بدء التسعير التلقائي"):
+            # تنظيف الأسماء لضمان أفضل مطابقة
+            df[item_col] = df[item_col].astype(str).str.strip()
+            master_df[master_item_col] = master_df[master_item_col].astype(str).str.strip()
             
-            # الحساب
-            df["Subtotal"] = df[selected_qty] * df[selected_price]
+            # عملية الربط لجلب السعر بناءً على اسم الدواء
+            # سيبحث عن السعر في الـ Master List ويضيفه لملفك
+            result_df = pd.merge(
+                df, 
+                master_df[[master_item_col, master_price_col]], 
+                left_on=item_col, 
+                right_on=master_item_col, 
+                how='left'
+            )
             
-            st.success(f"تم الحساب بناءً على: الكمية ({selected_qty}) والسعر ({selected_price})")
-            st.dataframe(df.style.format({"Subtotal": "{:.2f}", selected_price: "{:.2f}"}))
+            # تحديد عمود الكمية (نحاول تخمينه)
+            qty_col = next((c for c in df.columns if 'quant' in c.lower() or 'qty' in c.lower()), df.columns[0])
             
-            # إجمالي الفاتورة النهائي
-            total_sum = df["Subtotal"].sum()
-            st.metric("إجمالي الفاتورة", f"{total_sum:,.2f}")
+            # الحسابات
+            result_df[qty_col] = pd.to_numeric(result_df[qty_col], errors='coerce').fillna(0)
+            result_df[master_price_col] = pd.to_numeric(result_df[master_price_col], errors='coerce').fillna(0)
+            
+            result_df["Subtotal"] = result_df[qty_col] * result_df[master_price_col]
+            
+            st.success("تم سحب الأسعار من الـ Master List وحساب الإجمالي!")
+            st.dataframe(result_df)
+            
+            total = result_df["Subtotal"].sum()
+            st.metric("إجمالي العرض", f"{total:,.2f}")
 
     except Exception as e:
         st.error(f"حدث خطأ: {e}")
