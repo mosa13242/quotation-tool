@@ -71,19 +71,21 @@ if uploaded_file:
 if "df_work" in st.session_state:
     st.subheader("✏️ التعديل النهائي")
 
-    edited_df = st.data_editor(
-        st.session_state.df_work,
-        column_config={
-            "REMARKS": st.column_config.TextColumn(
-                "الصنف (بحث أو كتابة)",
-                suggestions=master_names
-            ),
-            "Unit_Price": st.column_config.NumberColumn(
-                "سعر الوحدة",
-                min_value=0.0,
-                format="%.2f"
-            ),
-        },
-        disabled=[c_item, c_qty],
-        use_container_
+   edited_df = st.data_editor(
+    st.session_state.df_work,
+    column_config={
+        "REMARKS": st.column_config.TextColumn(
+            "الصنف (بحث أو كتابة)",
+            suggestions=master_names
+        ),
+        "Unit_Price": st.column_config.NumberColumn(
+            "سعر الوحدة",
+            min_value=0.0,
+            format="%.2f"
+        ),
+    },
+    disabled=[c_item, c_qty],
+    use_container_width=True
+)
+
 
