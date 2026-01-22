@@ -1,3 +1,12 @@
+def get_safe_master():
+    if not os.path.exists(MASTER_FILE):
+        df = pd.DataFrame(columns=["Item", "Price"])
+        df.to_excel(MASTER_FILE, index=False)
+        return df, []
+    df = pd.read_excel(MASTER_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+    names = df[df.columns[0]].astype(str).tolist()
+    return df, names
 import streamlit as st
 import pandas as pd
 import os
