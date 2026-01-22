@@ -1,90 +1,94 @@
 import streamlit as st
 import pandas as pd
-import os
-from thefuzz import fuzz, process
+from pathlib import Path
 
-st.set_page_config(page_title="Quotation Tool", layout="wide")
-
-MASTER_FILE = "master_list.xlsx"
+st.set_page_config(page_title="Master List", layout="wide")
 
 # =========================
-# تحميل / إنشاء الماستر
+# Paths
 # =========================
-def get_safe_master():
-    if not os.path.exists(MASTER_FILE):
-        df = pd.DataFrame(columns=["Item", "Price"])
-        df.to_excel(MASTER_FILE, index=False)
-        return df, []
-    df = pd.read_excel(MASTER_FILE)
-    df.columns = [str(c).strip() for c in df.columns]
-    names = df["Item"].astype(str).tolist()
-    return df, names
-
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+MASTER_FILE = DATA_DIR / "master_list.csv"
 
 # =========================
-# واجهة التطبيق
+# Helpers
 # =========================
-st.title("🧾 نظام التسعير")
+def load_master():
+    if MASTER_FILE.exists():
+        return pd.read_csv(MASTER_FILE)
+    return pd.DataFrame(columns=["Item", "Unit_Price"])
 
-master_df, master_names = get_safe_master()
+def save_master(df: pd.DataFrame):
+    df.to_csv(MASTER_FILE, index=False)
 
-# =========================
-# رفع طلب العميل
-# =========================
-st.header("📤 رفع طلب العميل")
-uploaded_file = st.file_uploader("ارفع ملف Excel", type=["xlsx"])
-
-if uploaded_file:
-    df_client = pd.read_excel(uploaded_file)
-    df_client.columns = [str(c).strip() for c in df_client.columns]
-
-    c1, c2 = st.columns(2)
-    with c1:
-        c_item = st.selectbox("عمود الصنف (طلب العميل)", df_client.columns)
-        c_qty = st.selectbox("عمود الكمية", df_client.columns)
-    with c2:
-        m_item = "Item"
-        m_price = "Price"
-
-    # =========================
-    # المطابقة الذكية
-    # =========================
-    if st.button("🔍 تنفيذ التسعير"):
-        def smart_match(x):
-            if not master_names:
-                return str(x)
-            match, score = process.extractOne(
-                str(x), master_names, scorer=fuzz.token_set_ratio
-            )
-            return match if score >= 70 else str(x)
-
-        df_client["REMARKS"] = df_client[c_item].apply(smart_match)
-
-        price_map = dict(zip(master_df[m_item], master_df[m_price]))
-        df_client["Unit_Price"] = df_client["REMARKS"].map(price_map).fillna(0)
-
-        st.session_state.df_work = df_client
+def normalize_cols(df):
+    df.columns = [c.strip() for c in df.columns]
+    return df
 
 # =========================
-# التعديل والحفظ
+# UI
 # =========================
-if "df_work" in st.session_state:
-    st.subheader("✏️ التعديل النهائي")
+st.title("📦 Master List")
 
-    edited_df = st.data_editor(
-        st.session_state.df_work,
-        column_config={
-            "REMARKS": st.column_config.TextColumn(
-                "الصنف (بحث أو كتابة)",
-                suggestions=master_names
-            ),
-            "Unit_Price": st.column_config.NumberColumn(
-                "سعر الوحدة",
-                min_value=0.0,
-                format="%.2f"
-            ),
-        },
-        disabled=[c_item, c_qty],
-        use_container_
+base_df = load_master()
+
+uploaded = st.file_uploader(
+    "ارفع ملف Excel",
+    type=["xlsx", "xls"]
+)
+
+if uploaded:
+    df_xl = pd.read_excel(uploaded)
+    df_xl = normalize_cols(df_xl)
+
+    st.subheader("اختيار الأعمدة")
+    col_item = st.selectbox("عمود الصنف", df_xl.columns)
+    col_price = st.selectbox("عمود السعر", df_xl.columns)
+
+    merge = st.checkbox("تحديث السعر لو الصنف موجود", value=True)
+
+    if st.button("➕ إضافة إلى قاعدة البيانات"):
+        new_df = df_xl[[col_item, col_price]].copy()
+        new_df.columns = ["Item", "Unit_Price"]
+
+        if merge and not base_df.empty:
+            merged = base_df.set_index("Item")
+            new_df = new_df.set_index("Item")
+            merged.update(new_df)
+            merged = pd.concat([merged, new_df[~new_df.index.isin(merged.index)]])
+            result = merged.reset_index()
+        else:
+            result = pd.concat([base_df, new_df], ignore_index=True)
+
+        result["Unit_Price"] = pd.to_numeric(result["Unit_Price"], errors="coerce").fillna(0)
+        save_master(result)
+
+        st.success("✅ تم إضافة البيانات بنجاح")
+        st.rerun()
+
+# =========================
+# Editor
+# =========================
+st.subheader("✏️ تعديل البيانات")
+
+master_df = load_master()
+
+edited_df = st.data_editor(
+    master_df,
+    column_config={
+        "Item": st.column_config.TextColumn(label="الصنف"),
+        "Unit_Price": st.column_config.NumberColumn(
+            label="سعر الوحدة",
+            min_value=0.0,
+            format="%.2f"
+        ),
+    },
+    use_container_width=True
+)
+
+if st.button("💾 حفظ التعديلات"):
+    save_master(edited_df)
+    st.success("تم الحفظ")
 
 
