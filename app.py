@@ -36,14 +36,15 @@ menu = st.sidebar.radio("Menu", ["Master List", "Quotation"])
 # =======================
 # MASTER LIST
 # =======================
-if menu == "Master List":
-    st.title("Master List")
+required = {"Item", "Unit", "Unit_Price", "VAT_Percent"}
 
-    file = st.file_uploader("Upload Master List Excel", type=["xlsx"])
+if not required.issubset(df.columns):
+    st.error("Excel must contain: Item, Unit, Unit_Price, VAT_Percent")
+else:
+    st.dataframe(df)
 
-    if file:
-        df = pd.read_excel(file)
-        df.columns = df.columns.str.strip()
+    if st.button("Save Master List"):
+        st.session_state.master_df = df
+        st.success("Master List saved successfully ✅")
 
-        required = {"Item", "Unit", "Unit_Price", "VAT_Percent"}
-        if not require
+
