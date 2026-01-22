@@ -75,7 +75,8 @@ if uploaded_file is not None:
     # ===============================
     # Validate Columns
     # ===============================
-    quote_df.columns = quote_df.columns.str.strip()
+    quote_df.columns = quote_df.columns.map(lambda x: str(x).strip())
+
 
     if "Item" not in quote_df.columns or "Quantity" not in quote_df.columns:
         st.error("File must contain columns: Item and Quantity")
