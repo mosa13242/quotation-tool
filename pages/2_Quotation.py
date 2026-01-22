@@ -1,64 +1,65 @@
 import streamlit as st
 import pandas as pd
-import difflib  # مكتبة للمقارنة التقريبية للنصوص
+import difflib
 
 st.set_page_config(page_title="Quotation Tool", layout="wide")
 
-st.title("Quotation Tool")
-st.write("Upload Excel or PDF file (Item + Quantity)")
+st.title("Quotation Tool 2.0")
 
-uploaded_file = st.file_uploader("Upload Quotation File", type=["xlsx", "pdf"])
+uploaded_file = st.file_uploader("Upload Quotation File", type=["xlsx"])
 
-def find_best_match(target, columns):
-    """دالة للبحث عن أقرب اسم عمود موجود في الملف"""
-    # تحويل الكل لحروف صغيرة لتسهيل البحث
-    columns_lower = [c.lower() for c in columns]
-    target_lower = target.lower()
+def find_best_columns(columns):
+    """تخمين أعمدة الكمية والسعر من القائمة"""
+    col_map = {"qty": None, "price": None}
     
-    # البحث عن تطابق مباشر أولاً
-    if target_lower in columns_lower:
-        return columns[columns_lower.index(target_lower)]
-    
-    # إذا لم يوجد تطابق مباشر، نبحث عن أقرب كلمة (مثل Unit بدلاً من Unit_Price)
-    matches = difflib.get_close_matches(target_lower, columns_lower, n=1, cutoff=0.3)
-    if matches:
-        return columns[columns_lower.index(matches[0])]
-    
-    # بحث إضافي إذا كانت الكلمة الهدف جزء من اسم العمود (مثل 'Price' موجودة في 'Unit Price')
+    # كلمات دالة للبحث عنها
+    qty_keywords = ['quantity', 'qty', 'الكمية', 'العدد', 'count']
+    price_keywords = ['price', 'unit price', 'rate', 'cost', 'السعر', 'سعر الوحدة', 'unit_price']
+
     for col in columns:
-        if target_lower in col.lower() or col.lower() in target_lower:
-            return col
-    return None
+        c_low = str(col).lower().strip()
+        # فحص الكمية
+        if any(k in c_low for k in qty_keywords) and not col_map["qty"]:
+            col_map["qty"] = col
+        # فحص السعر (نتجنب كلمة Unit إذا كانت تعني وحدة القياس مثل Box/Pcs)
+        if any(k in c_low for k in price_keywords) and not col_map["price"]:
+            col_map["price"] = col
+            
+    return col_map
 
-if uploaded_file is not None:
+if uploaded_file:
     try:
-        if uploaded_file.name.endswith('.xlsx'):
-            df = pd.read_excel(uploaded_file)
-            df.columns = df.columns.astype(str).str.strip() # تنظيف الأسماء
-            
-            # تحديد الأعمدة المطلوبة بالبحث التقريبي
-            col_quantity = find_best_match("Quantity", df.columns)
-            col_unit_price = find_best_match("Unit Price", df.columns)
-            
-            if col_quantity and col_unit_price:
-                st.success(f"تم الربط تلقائياً: الكمية ({col_quantity})، السعر ({col_unit_price})")
-                
-                # تحويل البيانات لأرقام لضمان الحساب الصحيح
-                df[col_quantity] = pd.to_numeric(df[col_quantity], errors='coerce').fillna(0)
-                df[col_unit_price] = pd.to_numeric(df[col_unit_price], errors='coerce').fillna(0)
-                
-                # إجراء العملية الحسابية
-                df["Subtotal"] = df[col_quantity] * df[col_unit_price]
-                
-                st.dataframe(df)
-            else:
-                st.error("لم أتمكن من العثور على أعمدة الكمية أو السعر بشكل تلقائي.")
-                st.info(f"الأعمدة المكتشفة في ملفك هي: {list(df.columns)}")
+        df = pd.read_excel(uploaded_file)
+        df.columns = df.columns.astype(str).str.strip()
+        
+        # تخمين الأعمدة
+        matches = find_best_columns(df.columns)
+        
+        st.subheader("إعدادات الأعمدة")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_qty = st.selectbox("اختر عمود الكمية:", df.columns, 
+                                        index=list(df.columns).index(matches["qty"]) if matches["qty"] else 0)
+        with col2:
+            # هنا يمكنك اختيار العمود الذي يحتوي على "السعر" فعلياً إذا كان 'Unit' خطأ
+            selected_price = st.selectbox("اختر عمود السعر:", df.columns, 
+                                          index=list(df.columns).index(matches["price"]) if matches["price"] else 0)
 
-        elif uploaded_file.name.endswith('.pdf'):
-            st.info("جاري العمل على دعم ملفات PDF...")
+        if st.button("تحديث الحسابات"):
+            # تحويل للرقميات مع معالجة القيم الفارغة
+            df[selected_qty] = pd.to_numeric(df[selected_qty], errors='coerce').fillna(0)
+            df[selected_price] = pd.to_numeric(df[selected_price], errors='coerce').fillna(0)
+            
+            # الحساب
+            df["Subtotal"] = df[selected_qty] * df[selected_price]
+            
+            st.success(f"تم الحساب بناءً على: الكمية ({selected_qty}) والسعر ({selected_price})")
+            st.dataframe(df.style.format({"Subtotal": "{:.2f}", selected_price: "{:.2f}"}))
+            
+            # إجمالي الفاتورة النهائي
+            total_sum = df["Subtotal"].sum()
+            st.metric("إجمالي الفاتورة", f"{total_sum:,.2f}")
 
     except Exception as e:
-        st.error(f"حدث خطأ أثناء المعالجة: {e}")
-else:
-    st.info("يرجى رفع ملف إكسل للبدء.")
+        st.error(f"حدث خطأ: {e}")
