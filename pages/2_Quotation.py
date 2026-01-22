@@ -7,7 +7,7 @@ st.set_page_config(page_title="نظام التسعير المستقر", layout="
 
 MASTER_FILE = "master_list.xlsx"
 
-# وظيفة تحميل الماستر - تضمن تحديث قائمة البحث دايماً
+# وظيفة تحميل الماستر - تضمن تحديث قائمة البحث دائماً
 def load_master_safe():
     if not os.path.exists(MASTER_FILE):
         df = pd.DataFrame(columns=["Item", "Price"])
@@ -66,7 +66,7 @@ if uploaded_file:
             },
             disabled=[c_item, c_qty],
             use_container_width=True,
-            key="final_stable_editor_v15"
+            key="final_stable_editor_v20"
         )
 
         if st.button("🚀 اعتماد وحفظ التعديلات في الماستر"):
