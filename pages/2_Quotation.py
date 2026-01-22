@@ -1,135 +1,126 @@
 import streamlit as st
 import pandas as pd
 import os
-from thefuzz import fuzz, process
+from thefuzz import process, fuzz
 
-# ================== إعداد الصفحة ==================
-st.set_page_config(
-    page_title="Quotation System",
-    layout="wide"
-)
+st.set_page_config(page_title="Quotation", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
 
-# ================== تحميل الماستر ==================
+# ================= تحميل الماستر =================
 def load_master():
     if not os.path.exists(MASTER_FILE):
         df = pd.DataFrame(columns=["Item", "Price"])
         df.to_excel(MASTER_FILE, index=False)
-        return df, []
+        return df
 
     df = pd.read_excel(MASTER_FILE)
-    df.columns = [c.strip() for c in df.columns]
-    names = df["Item"].astype(str).unique().tolist()
-    return df, names
+    df.columns = df.columns.str.strip()
+    return df
 
 
-master_df, master_names = load_master()
+master_df = load_master()
+master_items = master_df["Item"].astype(str).tolist()
 
-st.title("📄 نظام التسعير والبحث الذكي")
+st.title("📄 نظام التسعير")
 
-# ================== رفع ملف العميل ==================
-uploaded_file = st.file_uploader(
-    "📤 ارفع ملف طلب العميل (Excel)",
-    type=["xlsx"]
-)
+# ================= رفع ملف العميل =================
+uploaded_file = st.file_uploader("📤 ارفع ملف العميل", type=["xlsx"])
 
 if uploaded_file:
-    df_client = pd.read_excel(uploaded_file)
-    df_client.columns = [c.strip() for c in df_client.columns]
+    df = pd.read_excel(uploaded_file)
+    df.columns = df.columns.str.strip()
 
     st.subheader("⚙️ ربط الأعمدة")
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
+    with c1:
+        item_col = st.selectbox("عمود الصنف (العميل)", df.columns)
+        qty_col = st.selectbox("عمود الكمية", df.columns)
 
-    with col1:
-        c_item = st.selectbox("عمود الصنف (عندك)", df_client.columns)
-        c_qty = st.selectbox("عمود الكمية (عندك)", df_client.columns)
+    with c2:
+        price_col = st.selectbox("عمود السعر (الماستر)", master_df.columns)
 
-    with col2:
-        m_item = st.selectbox("عمود الصنف (الماستر)", master_df.columns)
-        m_price = st.selectbox("عمود السعر (الماستر)", master_df.columns)
-
-    # ================== البحث الذكي ==================
-    if st.button("🔍 تنفيذ البحث والتسعير"):
-        def smart_match(text):
-            if not master_names:
-                return str(text)
+    # ================= البحث الذكي =================
+    if st.button("🔍 تنفيذ البحث"):
+        def smart_find(text):
+            if not master_items:
+                return "", 0
 
             match, score = process.extractOne(
                 str(text),
-                master_names,
+                master_items,
                 scorer=fuzz.token_set_ratio
             )
+            return match if score >= 70 else "", score
 
-            return match if score >= 70 else str(text)
+        remarks = []
+        prices = []
 
-        df_client["REMARKS"] = df_client[c_item].apply(smart_match)
+        for val in df[item_col]:
+            match, score = smart_find(val)
+            if match:
+                price = master_df.loc[
+                    master_df["Item"] == match, price_col
+                ].values[0]
+            else:
+                price = 0
 
-        price_map = dict(zip(master_df[m_item], master_df[m_price]))
-        df_client["Unit_Price"] = df_client["REMARKS"].map(price_map).fillna(0.0)
+            remarks.append(match if match else val)
+            prices.append(price)
 
-        st.session_state["quote_df"] = df_client.copy()
+        df["REMARKS"] = remarks
+        df["Unit_Price"] = prices
 
-    # ================== جدول التعديل ==================
-    if "quote_df" in st.session_state:
-        st.info("✍️ اكتب أو اختَر الصنف في خانة REMARKS")
+        st.session_state["df"] = df.copy()
+
+    # ================= جدول التعديل =================
+    if "df" in st.session_state:
+        st.info("✍️ عدّل REMARKS أو السعر يدويًا لو حابب")
 
         edited_df = st.data_editor(
-            st.session_state["quote_df"],
-            column_config={
-                "REMARKS": st.column_config.TextColumn(
-                    "الصنف (بحث أو جديد)",
-                    suggestions=master_names,
-                    help="اختَر من الماستر أو اكتب صنف جديد"
-                ),
-                "Unit_Price": st.column_config.NumberColumn(
-                    "سعر الوحدة",
-                    format="%.2f",
-                    min_value=0.0
-                )
-            },
-            disabled=[c_item, c_qty],
+            st.session_state["df"],
             use_container_width=True,
             key="editor"
         )
 
-        # ================== حفظ + حساب ==================
-        if st.button("💾 اعتماد الفاتورة وحفظ الجديد"):
-            latest_master, latest_names = load_master()
+        # ================= حفظ =================
+        if st.button("💾 اعتماد وحفظ"):
+            master_df = load_master()
+            existing = master_df["Item"].astype(str).tolist()
+
             new_rows = []
 
             for _, row in edited_df.iterrows():
                 name = str(row["REMARKS"]).strip()
                 price = float(row["Unit_Price"])
 
-                if name and name not in latest_names:
+                if name and name not in existing:
                     new_rows.append({
-                        m_item: name,
-                        m_price: price
+                        "Item": name,
+                        price_col: price
                     })
-                    latest_names.append(name)
+                    existing.append(name)
 
             if new_rows:
-                updated_master = pd.concat(
-                    [latest_master, pd.DataFrame(new_rows)],
+                master_df = pd.concat(
+                    [master_df, pd.DataFrame(new_rows)],
                     ignore_index=True
                 )
-                updated_master.to_excel(MASTER_FILE, index=False)
-                st.success(f"✅ تم إضافة {len(new_rows)} صنف جديد للماستر")
+                master_df.to_excel(MASTER_FILE, index=False)
+                st.success(f"✅ تم إضافة {len(new_rows)} صنف جديد")
 
-            edited_df[c_qty] = pd.to_numeric(
-                edited_df[c_qty],
+            edited_df[qty_col] = pd.to_numeric(
+                edited_df[qty_col],
                 errors="coerce"
             ).fillna(0)
 
-            edited_df["Total"] = edited_df[c_qty] * edited_df["Unit_Price"]
-
-            st.subheader("📊 الفاتورة النهائية")
-            st.dataframe(edited_df, use_container_width=True)
-
-            st.metric(
-                "💰 الإجمالي",
-                f"{edited_df['Total'].sum():,.2f}"
+            edited_df["Total"] = (
+                edited_df[qty_col] * edited_df["Unit_Price"]
             )
+
+            st.subheader("📊 النتيجة النهائية")
+            st.dataframe(edited_df, use_container_width=True)
+            st.metric("💰 الإجمالي", f"{edited_df['Total'].sum():,.2f}")
+
 
