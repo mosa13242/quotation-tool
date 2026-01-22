@@ -1,66 +1,100 @@
 import streamlit as st
 import pandas as pd
+import os
 
-st.title("📋 إدارة قائمة الأسعار (Master List)")
+st.set_page_config(page_title="Master List", layout="wide")
 
-try:
-    df = pd.read_excel("master_list.xlsx")
-    
-    st.write("يمكنك تعديل الأسعار أو إضافة أصناف هنا مباشرة:")
-    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="master_editor")
-    
-    if st.button("💾 حفظ التعديلات في الماستر"):
-        edited_df.to_excel("master_list.xlsx", index=False)
-        st.success("تم تحديث قائمة الماستر بنجاح!")
-except Exception as e:
-    st.error("تأكد من وجود ملف master_list.xlsx")
-    st.divider()
-st.header("📥 إضافة ملف Excel إلى قاعدة البيانات")
+MASTER_FILE = "master_list.xlsx"
 
-upload_master = st.file_uploader(
+# ===============================
+# تحميل / إنشاء ملف الماستر بأمان
+# ===============================
+def get_safe_master():
+    if not os.path.exists(MASTER_FILE):
+        df = pd.DataFrame(columns=["Item", "Price"])
+        df.to_excel(MASTER_FILE, index=False)
+        return df, []
+
+    df = pd.read_excel(MASTER_FILE)
+    df.columns = [str(c).strip() for c in df.columns]
+    names = df["Item"].astype(str).tolist()
+    return df, names
+
+
+# ===============================
+# واجهة الصفحة
+# ===============================
+st.title("📦 إضافة ملف Excel إلى قاعدة البيانات")
+
+base_df, base_names = get_safe_master()
+
+uploaded_file = st.file_uploader(
     "ارفع ملف Excel لإضافته إلى قاعدة البيانات",
-    type=["xlsx"],
-    key="upload_master_db"
+    type=["xlsx"]
 )
 
-if upload_master:
-    df_new = pd.read_excel(upload_master)
+if uploaded_file:
+    df_new = pd.read_excel(uploaded_file)
     df_new.columns = [str(c).strip() for c in df_new.columns]
+
+    st.subheader("🔗 ربط الأعمدة")
 
     col1, col2 = st.columns(2)
     with col1:
-        new_item_col = st.selectbox("عمود الصنف", df_new.columns)
+        new_item_col = st.selectbox(
+            "عمود الصنف في الملف الجديد",
+            df_new.columns
+        )
     with col2:
-        new_price_col = st.selectbox("عمود السعر", df_new.columns)
+        new_price_col = st.selectbox(
+            "عمود السعر في الملف الجديد",
+            df_new.columns
+        )
 
-    update_price = st.checkbox(
-        "🔄 تحديث السعر إذا كان الصنف موجود بالفعل",
+    update_existing = st.checkbox(
+        "🔁 تحديث السعر إذا كان الصنف موجود بالفعل",
         value=True
     )
 
     if st.button("➕ دمج الملف مع قاعدة البيانات"):
-        base_df, base_names = get_safe_master()
-
-        df_new = df_new[[new_item_col, new_price_col]].copy()
-        df_new.columns = ["Item", "Price"]
-
-        df_new["Item"] = df_new["Item"].astype(str).str.strip()
-        df_new["Price"] = pd.to_numeric(
-            df_new["Price"], errors="coerce"
-        ).fillna(0)
+        added = 0
+        updated = 0
 
         for _, row in df_new.iterrows():
-            item = row["Item"]
-            price = row["Price"]
+            item = str(row[new_item_col]).strip()
+            try:
+                price = float(row[new_price_col])
+            except:
+                price = 0.0
+
+            if item == "" or item.lower() == "nan":
+                continue
 
             if item in base_names:
-                if update_price:
-                    base_df.loc[
-                        base_df["Item"] == item, "Price"
-                    ] = price
+                if update_existing:
+                    base_df.loc[base_df["Item"] == item, "Price"] = price
+                    updated += 1
             else:
-                base_df.loc[len(base_df)] = [item, price]
+                base_df = pd.concat(
+                    [base_df, pd.DataFrame([{
+                        "Item": item,
+                        "Price": price
+                    }])],
+                    ignore_index=True
+                )
+                base_names.append(item)
+                added += 1
 
         base_df.to_excel(MASTER_FILE, index=False)
-        st.success("✅ تم دمج الملف بنجاح مع قاعدة البيانات")
+
+        st.success(
+            f"✅ تم الدمج بنجاح | تمت إضافة {added} صنف "
+            f"| تم تحديث {updated} سعر"
+        )
+
+        st.subheader("📋 قاعدة البيانات الحالية")
+        st.dataframe(base_df, use_container_width=True)
+
+else:
+    st.info("⬆️ ارفع ملف Excel للبدء")
 
