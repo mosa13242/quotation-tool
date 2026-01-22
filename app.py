@@ -92,6 +92,7 @@ if page == "Quotation":
             quote_df = clean_columns(quote_df)
 
         if quote_df is None:
-            st.error("Could not read data from
+            st.error("Could not read data from PDF")
+
 
 
