@@ -1,124 +1,81 @@
 import streamlit as st
 import pandas as pd
-import io
+import sqlite3
+import pdfplumber
 
-# =============================
-# Page Config
-# =============================
-st.set_page_config(page_title="Quotation Tool", layout="wide")
 st.title("Quotation Tool")
-st.write("Upload Excel or PDF file (Item + Quantity) to generate quotation")
+st.write("Upload Excel or PDF file (Item + Quantity)")
 
-# =============================
-# Load Master List (Excel)
-# =============================
+# =========================
+# Load Master List from DB
+# =========================
 try:
-    master_df = pd.read_excel("master_list.xlsx")
-except Exception as e:
-    st.error("Master list file not found: master_list.xlsx")
+    conn = sqlite3.connect("master.db")
+    master_df = pd.read_sql("SELECT * FROM master_list", conn)
+    conn.close()
+except:
+    st.error("Master list not found. Upload it first.")
     st.stop()
 
-master_df.columns = master_df.columns.map(lambda x: str(x).strip())
+if master_df.empty:
+    st.error("Master list is empty.")
+    st.stop()
 
-# =============================
-# Upload File
-# =============================
-uploaded_file = st.file_uploader(
-    "Upload Quotation File (Excel or PDF)",
-    type=["xlsx", "xls", "pdf"]
+master_df["Item"] = master_df["Item"].astype(str).str.strip()
+
+# =========================
+# Upload Quotation File
+# =========================
+uploaded = st.file_uploader(
+    "Upload Quotation File",
+    type=["xlsx", "pdf"]
 )
 
-if uploaded_file:
+if uploaded:
+    # ---------- Excel ----------
+    if uploaded.name.endswith(".xlsx"):
+        quote_df = pd.read_excel(uploaded)
 
-    # =============================
-    # Read File
-    # =============================
-    try:
-        if uploaded_file.name.endswith((".xlsx", ".xls")):
-            quote_df = pd.read_excel(uploaded_file)
+    # ---------- PDF ----------
+    else:
+        rows = []
+        with pdfplumber.open(uploaded) as pdf:
+            for page in pdf.pages:
+                table = page.extract_table()
+                if table:
+                    rows.extend(table)
 
-        elif uploaded_file.name.endswith(".pdf"):
-            st.info("Reading PDF file...")
-
-            try:
-                import pdfplumber
-            except ImportError:
-                st.error("pdfplumber not installed")
-                st.stop()
-
-            tables = []
-            with pdfplumber.open(uploaded_file) as pdf:
-                for page in pdf.pages:
-                    table = page.extract_table()
-                    if table:
-                        tables.extend(table)
-
-            if len(tables) < 2:
-                st.error("No readable table found in PDF")
-                st.stop()
-
-            quote_df = pd.DataFrame(tables[1:], columns=tables[0])
-
-        else:
-            st.error("Unsupported file type")
+        if not rows:
+            st.error("Could not read table from PDF")
             st.stop()
 
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        st.stop()
+        quote_df = pd.DataFrame(rows[1:], columns=rows[0])
 
-    # =============================
-    # Clean Columns
-    # =============================
-    quote_df.columns = quote_df.columns.map(lambda x: str(x).strip())
+    # =========================
+    # Clean & Validate
+    # =========================
+    quote_df.columns = quote_df.columns.astype(str).str.strip()
 
     if "Item" not in quote_df.columns or "Quantity" not in quote_df.columns:
-        if quote_df.shape[1] >= 2:
-            quote_df = quote_df.iloc[:, :2]
-            quote_df.columns = ["Item", "Quantity"]
-        else:
-            st.error("File must contain Item and Quantity")
-            st.stop()
+        st.error("File must contain columns: Item and Quantity")
+        st.stop()
 
     quote_df["Item"] = quote_df["Item"].astype(str).str.strip()
     quote_df["Quantity"] = pd.to_numeric(quote_df["Quantity"], errors="coerce").fillna(0)
 
-    # =============================
-    # Merge
-    # =============================
+    # =========================
+    # Merge with Master
+    # =========================
     result = quote_df.merge(master_df, on="Item", how="left")
 
-    result["Unit_Price"] = pd.to_numeric(result["Unit_Price"], errors="coerce").fillna(0)
-    result["VAT_Percent"] = pd.to_numeric(result["VAT_Percent"], errors="coerce").fillna(0)
+    if result["Unit_Price"].isna().any():
+        st.warning("Some items were not found in master list")
 
-    # =============================
-    # Calculations
-    # =============================
-    result["Total_Before_VAT"] = result["Quantity"] * result["Unit_Price"]
-    result["VAT_Value"] = result["Total_Before_VAT"] * (result["VAT_Percent"] / 100)
-    result["Total_After_VAT"] = result["Total_Before_VAT"] + result["VAT_Value"]
+    result["Subtotal"] = result["Quantity"] * result["Unit_Price"]
+    result["VAT"] = result["Subtotal"] * (result["VAT_Percent"] / 100)
+    result["Total"] = result["Subtotal"] + result["VAT"]
 
-    # =============================
-    # Display
-    # =============================
-    st.subheader("Quotation Result")
-    st.dataframe(result, use_container_width=True)
+    st.dataframe(result)
 
-    st.subheader("Totals")
-    col1, col2 = st.columns(2)
-    col1.metric("Total Before VAT", f"{result['Total_Before_VAT'].sum():,.2f}")
-    col2.metric("Total After VAT", f"{result['Total_After_VAT'].sum():,.2f}")
-
-    # =============================
-    # Download
-    # =============================
-    output = io.BytesIO()
-    result.to_excel(output, index=False)
-    output.seek(0)
-
-    st.download_button(
-        "Download Quotation Excel",
-        data=output,
-        file_name="quotation_result.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.subheader("Grand Total")
+    st.success(f"{result['Total'].sum():.2f}")
