@@ -1,27 +1,27 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 import io
 
 # =============================
-# Page Title
+# Page Config
 # =============================
 st.set_page_config(page_title="Quotation Tool", layout="wide")
 st.title("Quotation Tool")
 st.write("Upload Excel or PDF file (Item + Quantity) to generate quotation")
 
 # =============================
-# Load Master List from SQLite
+# Load Master List (Excel)
 # =============================
-conn = sqlite3.connect("master.db")
-master_df = pd.read_sql("SELECT * FROM master_list", conn)
-conn.close()
+try:
+    master_df = pd.read_excel("master_list.xlsx")
+except Exception as e:
+    st.error("Master list file not found: master_list.xlsx")
+    st.stop()
 
-# Clean master columns
 master_df.columns = master_df.columns.map(lambda x: str(x).strip())
 
 # =============================
-# File Upload
+# Upload File
 # =============================
 uploaded_file = st.file_uploader(
     "Upload Quotation File (Excel or PDF)",
@@ -43,7 +43,7 @@ if uploaded_file:
             try:
                 import pdfplumber
             except ImportError:
-                st.error("pdfplumber not installed. Please add it to requirements.txt")
+                st.error("pdfplumber not installed")
                 st.stop()
 
             tables = []
@@ -53,8 +53,8 @@ if uploaded_file:
                     if table:
                         tables.extend(table)
 
-            if not tables or len(tables) < 2:
-                st.error("No readable table found in PDF. Please upload Excel instead.")
+            if len(tables) < 2:
+                st.error("No readable table found in PDF")
                 st.stop()
 
             quote_df = pd.DataFrame(tables[1:], columns=tables[0])
@@ -68,35 +68,26 @@ if uploaded_file:
         st.stop()
 
     # =============================
-    # Clean Columns SAFELY
+    # Clean Columns
     # =============================
     quote_df.columns = quote_df.columns.map(lambda x: str(x).strip())
 
-    # =============================
-    # Fix PDF / Unknown Headers
-    # =============================
     if "Item" not in quote_df.columns or "Quantity" not in quote_df.columns:
         if quote_df.shape[1] >= 2:
             quote_df = quote_df.iloc[:, :2]
             quote_df.columns = ["Item", "Quantity"]
         else:
-            st.error("File must contain Item and Quantity columns")
+            st.error("File must contain Item and Quantity")
             st.stop()
 
-    # =============================
-    # Clean Data
-    # =============================
     quote_df["Item"] = quote_df["Item"].astype(str).str.strip()
     quote_df["Quantity"] = pd.to_numeric(quote_df["Quantity"], errors="coerce").fillna(0)
 
     # =============================
-    # Merge with Master List
+    # Merge
     # =============================
     result = quote_df.merge(master_df, on="Item", how="left")
 
-    # =============================
-    # Validate Prices
-    # =============================
     result["Unit_Price"] = pd.to_numeric(result["Unit_Price"], errors="coerce").fillna(0)
     result["VAT_Percent"] = pd.to_numeric(result["VAT_Percent"], errors="coerce").fillna(0)
 
@@ -108,22 +99,15 @@ if uploaded_file:
     result["Total_After_VAT"] = result["Total_Before_VAT"] + result["VAT_Value"]
 
     # =============================
-    # Display Result
+    # Display
     # =============================
     st.subheader("Quotation Result")
     st.dataframe(result, use_container_width=True)
 
-    # =============================
-    # Totals
-    # =============================
     st.subheader("Totals")
     col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric("Total Before VAT", f"{result['Total_Before_VAT'].sum():,.2f}")
-
-    with col2:
-        st.metric("Total After VAT", f"{result['Total_After_VAT'].sum():,.2f}")
+    col1.metric("Total Before VAT", f"{result['Total_Before_VAT'].sum():,.2f}")
+    col2.metric("Total After VAT", f"{result['Total_After_VAT'].sum():,.2f}")
 
     # =============================
     # Download
