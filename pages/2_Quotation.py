@@ -1,116 +1,140 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import pdfplumber
+import io
 
-# ===============================
+# =============================
 # Page Title
-# ===============================
+# =============================
+st.set_page_config(page_title="Quotation Tool", layout="wide")
 st.title("Quotation Tool")
-
 st.write("Upload Excel or PDF file (Item + Quantity) to generate quotation")
 
-# ===============================
-# Database Connection
-# ===============================
-conn = sqlite3.connect("quotation.db", check_same_thread=False)
+# =============================
+# Load Master List from SQLite
+# =============================
+conn = sqlite3.connect("master.db")
+master_df = pd.read_sql("SELECT * FROM master_list", conn)
+conn.close()
 
-# ===============================
-# Load Master List
-# ===============================
-try:
-    master_df = pd.read_sql("SELECT * FROM master_items", conn)
-except Exception as e:
-    st.error("Master list not found in database")
-    st.stop()
+# Clean master columns
+master_df.columns = master_df.columns.map(lambda x: str(x).strip())
 
-# ===============================
-# File Upload (Excel or PDF)
-# ===============================
+# =============================
+# File Upload
+# =============================
 uploaded_file = st.file_uploader(
     "Upload Quotation File (Excel or PDF)",
-    type=["xlsx", "pdf"]
+    type=["xlsx", "xls", "pdf"]
 )
 
-if uploaded_file is not None:
-    file_name = uploaded_file.name.lower()
+if uploaded_file:
 
-    # ===============================
-    # Read EXCEL
-    # ===============================
-    if file_name.endswith(".xlsx"):
-        quote_df = pd.read_excel(uploaded_file)
+    # =============================
+    # Read File
+    # =============================
+    try:
+        if uploaded_file.name.endswith((".xlsx", ".xls")):
+            quote_df = pd.read_excel(uploaded_file)
 
-    # ===============================
-    # Read PDF (text-based)
-    # ===============================
-    elif file_name.endswith(".pdf"):
-        st.info("Reading PDF file...")
+        elif uploaded_file.name.endswith(".pdf"):
+            st.info("Reading PDF file...")
 
-        rows = []
+            try:
+                import pdfplumber
+            except ImportError:
+                st.error("pdfplumber not installed. Please add it to requirements.txt")
+                st.stop()
 
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
-                    continue
+            tables = []
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    table = page.extract_table()
+                    if table:
+                        tables.extend(table)
 
-                for line in text.split("\n"):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        item = " ".join(parts[:-1])
-                        qty = parts[-1]
+            if not tables or len(tables) < 2:
+                st.error("No readable table found in PDF. Please upload Excel instead.")
+                st.stop()
 
-                        rows.append({
-                            "Item": item.strip(),
-                            "Quantity": qty
-                        })
+            quote_df = pd.DataFrame(tables[1:], columns=tables[0])
 
-        quote_df = pd.DataFrame(rows)
+        else:
+            st.error("Unsupported file type")
+            st.stop()
 
-    else:
-        st.error("Unsupported file type")
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
         st.stop()
 
-    # ===============================
-    # Validate Columns
-    # ===============================
+    # =============================
+    # Clean Columns SAFELY
+    # =============================
     quote_df.columns = quote_df.columns.map(lambda x: str(x).strip())
 
-
+    # =============================
+    # Fix PDF / Unknown Headers
+    # =============================
     if "Item" not in quote_df.columns or "Quantity" not in quote_df.columns:
-        st.error("File must contain columns: Item and Quantity")
-        st.stop()
+        if quote_df.shape[1] >= 2:
+            quote_df = quote_df.iloc[:, :2]
+            quote_df.columns = ["Item", "Quantity"]
+        else:
+            st.error("File must contain Item and Quantity columns")
+            st.stop()
 
-    # ===============================
+    # =============================
+    # Clean Data
+    # =============================
+    quote_df["Item"] = quote_df["Item"].astype(str).str.strip()
+    quote_df["Quantity"] = pd.to_numeric(quote_df["Quantity"], errors="coerce").fillna(0)
+
+    # =============================
     # Merge with Master List
-    # ===============================
+    # =============================
     result = quote_df.merge(master_df, on="Item", how="left")
 
-    # ===============================
-    # Numeric Conversion
-    # ===============================
-    result["Quantity"] = pd.to_numeric(result["Quantity"], errors="coerce").fillna(0)
+    # =============================
+    # Validate Prices
+    # =============================
     result["Unit_Price"] = pd.to_numeric(result["Unit_Price"], errors="coerce").fillna(0)
     result["VAT_Percent"] = pd.to_numeric(result["VAT_Percent"], errors="coerce").fillna(0)
 
-    # ===============================
+    # =============================
     # Calculations
-    # ===============================
+    # =============================
     result["Total_Before_VAT"] = result["Quantity"] * result["Unit_Price"]
-    result["VAT_Amount"] = result["Total_Before_VAT"] * result["VAT_Percent"] / 100
-    result["Total_After_VAT"] = result["Total_Before_VAT"] + result["VAT_Amount"]
+    result["VAT_Value"] = result["Total_Before_VAT"] * (result["VAT_Percent"] / 100)
+    result["Total_After_VAT"] = result["Total_Before_VAT"] + result["VAT_Value"]
 
-    # ===============================
+    # =============================
     # Display Result
-    # ===============================
+    # =============================
     st.subheader("Quotation Result")
-    st.dataframe(result)
+    st.dataframe(result, use_container_width=True)
 
-    # ===============================
+    # =============================
     # Totals
-    # ===============================
+    # =============================
     st.subheader("Totals")
-    st.write("Subtotal:", result["Total_Before_VAT"].sum())
-    st.write("VAT:", result["VAT_Amount"].sum())
-    st.write("Grand Total:", result["Total_After_VAT"].sum())
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Total Before VAT", f"{result['Total_Before_VAT'].sum():,.2f}")
+
+    with col2:
+        st.metric("Total After VAT", f"{result['Total_After_VAT'].sum():,.2f}")
+
+    # =============================
+    # Download
+    # =============================
+    output = io.BytesIO()
+    result.to_excel(output, index=False)
+    output.seek(0)
+
+    st.download_button(
+        "Download Quotation Excel",
+        data=output,
+        file_name="quotation_result.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
