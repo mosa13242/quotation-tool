@@ -46,3 +46,50 @@ if uploaded_file:
         price_dict = dict(zip(master_df[m_item], master_df[m_price]))
         df_client['Unit_Price'] = df_client['REMARKS'].map(price_dict).fillna(0)
         st.session_state['df_working'] = df_client
+
+    # --- واجهة الـ EDIT المزدوجة (اسم + سعر) ---
+    if 'df_working' in st.session_state:
+        st.warning("💡 لتسجيل صنف جديد: اكتب الاسم في REMARKS واكتب سعره في Unit_Price ثم اضغط اعتماد.")
+        
+        # تم فتح عمود REMARKS وعمود Unit_Price للتعديل
+        edited_df = st.data_editor(
+            st.session_state['df_working'],
+            column_config={
+                "REMARKS": st.column_config.TextColumn("الصنف (EDIT)", width="large"),
+                "Unit_Price": st.column_config.NumberColumn("السعر (EDIT)", format="%.2f EGP")
+            },
+            disabled=[c_item, c_qty],
+            use_container_width=True,
+            key="smart_editor_v3"
+        )
+
+        if st.button("🚀 اعتماد التسعير وحفظ البيانات الجديدة"):
+            new_entries = []
+            current_master_items = master_df[m_item].astype(str).tolist()
+
+            # فحص كل سطر بحثاً عن إضافات جديدة
+            for index, row in edited_df.iterrows():
+                item_name = str(row['REMARKS']).strip()
+                item_price = float(row['Unit_Price'])
+                
+                # إذا كان الاسم جديداً تماماً أو كان موجوداً ولكن تم تعديل سعره يدوياً
+                if item_name not in current_master_items and item_name != "":
+                    new_entries.append({m_item: item_name, m_price: item_price})
+                    current_master_items.append(item_name)
+
+            # تحديث ملف الماستر فعلياً بالأسماء والأسعار الجديدة
+            if new_entries:
+                new_df = pd.DataFrame(new_entries)
+                updated_master = pd.concat([master_df, new_df], ignore_index=True)
+                updated_master.to_excel(MASTER_FILE, index=False)
+                st.success(f"✅ تم حفظ {len(new_entries)} صنف جديد مع أسعارهم في الماستر ليست!")
+
+            # حساب الإجماليات النهائية للعرض الحالي
+            edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
+            edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
+            
+            st.dataframe(edited_df, use_container_width=True)
+            st.metric("الإجمالي النهائي", f"{edited_df['Total'].sum():,.2f} EGP")
+            
+            csv = edited_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 تحميل عرض السعر", csv, "Final_Quote.csv", "text/csv")
