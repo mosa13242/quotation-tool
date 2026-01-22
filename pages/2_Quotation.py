@@ -39,7 +39,8 @@ if uploaded_file:
         result.to_excel(writer, index=False)
 
     st.download_button(
-        "Download Excel",
+        "Download Quotation Excel",
         output.getvalue(),
-        "Quotation.xlsx"
+        file_name="Quotation.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
