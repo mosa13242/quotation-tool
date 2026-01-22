@@ -3,9 +3,9 @@ import pandas as pd
 import os
 from thefuzz import fuzz, process
 
+# إعداد الصفحة وتأمين ظهور زر الرفع
 st.set_page_config(page_title="نظام التسعير المستقر", layout="wide")
 
-# إعداد ملف الماستر
 MASTER_FILE = "master_list.xlsx"
 
 def load_master():
@@ -18,21 +18,19 @@ def load_master():
     names = df[df.columns[0]].astype(str).unique().tolist()
     return df, names
 
-# 1. تحميل بيانات الماستر في البداية
 master_df, master_names = load_master()
 
-st.title("💰 نظام تسعير الطلبات")
+st.title("💰 نظام تسعير الطلبات (بحث + مطابقة)")
 
-# 2. إظهار زر الرفع كأول عنصر في الصفحة لضمان ظهوره دائماً
-uploaded_file = st.file_uploader("📥 ارفع ملف الإكسيل الخاص بالعميل هنا", type=["xlsx"])
+# 1. زر رفع الملف (أول عنصر لضمان ظهوره)
+uploaded_file = st.file_uploader("📥 ارفع ملف العميل (Excel)", type=["xlsx"])
 
 if uploaded_file:
     try:
         df_client = pd.read_excel(uploaded_file)
         df_client.columns = [str(c).strip() for c in df_client.columns]
         
-        st.success("✅ تم رفع الملف بنجاح!")
-        
+        # اختيار الأعمدة
         col1, col2 = st.columns(2)
         with col1:
             c_item = st.selectbox("عمود الصنف (طلبك):", df_client.columns)
@@ -41,109 +39,67 @@ if uploaded_file:
             m_item = st.selectbox("صنف الماستر:", master_df.columns if not master_df.empty else ["Item"])
             m_price = st.selectbox("سعر الماستر:", master_df.columns if not master_df.empty else ["Price"])
 
-        if st.button("🔍 تنفيذ المطابقة والبحث"):
+        # 2. تنفيذ المطابقة الذكية الأولية
+        if st.button("🔍 تنفيذ المطابقة الذكية"):
             def quick_match(text):
                 if not master_names: return str(text)
                 match, score = process.extractOne(str(text), master_names, scorer=fuzz.token_set_ratio)
                 return match if score > 70 else str(text)
 
-            # تجهيز البيانات للعرض
-            df_client['Item'] = df_client[c_item]
-            df_client['REMARKS'] = df_client[c_item].apply(quick_match)
-            price_dict = dict(zip(master_df[m_item], master_df[m_price]))
-            df_client['Unit_Price'] = df_client['REMARKS'].map(price_dict).fillna(0.0)
+            # توزيع البيانات كما طلبت
+            df_client['Item'] = df_client[c_item] # الصنف المطلوب
+            df_client['REMARKS'] = df_client[c_item].apply(quick_match) # المطابقة أو البحث
             
-            st.session_state['v_data'] = df_client[['Item', 'REMARKS', c_qty, 'Unit_Price']]
+            p_dict = dict(zip(master_df[m_item], master_df[m_price]))
+            df_client['Unit_Price'] = df_client['REMARKS'].map(p_dict).fillna(0.0)
+            
+            st.session_state['data_v5'] = df_client[['Item', 'REMARKS', c_qty, 'Unit_Price']]
 
-        if 'v_data' in st.session_state:
-            st.info("💡 يمكنك الآن مراجعة الأسعار أو كتابة صنف جديد في خانة REMARKS.")
-            
-            # الجدول التفاعلي المبسط لتجنب الـ TypeError
+        if 'data_v5' in st.session_state:
+            # 3. نظام البحث المساعد (لتجنب TypeError داخل الجدول)
+            st.markdown("---")
+            st.subheader("🔎 مساعد البحث في الماستر")
+            search_query = st.text_input("ابحث عن اسم صنف لنسخه وضعه في REMARKS:")
+            if search_query:
+                matches = process.extract(search_query, master_names, limit=3)
+                for m in matches:
+                    st.code(m[0]) # يظهر الاسم في صندوق كود لتسهيل النسخ
+
+            # 4. جدول التعديل المستقر (تم إلغاء suggestions المسببة للخطأ)
             edited_df = st.data_editor(
-                st.session_state['v_data'],
+                st.session_state['data_v5'],
                 column_config={
                     "Item": st.column_config.TextColumn("الصنف المطلوب", disabled=True),
-                    "REMARKS": st.column_config.TextColumn("ملاحظات (البحث في الماستر)", width="large"),
+                    "REMARKS": st.column_config.TextColumn("ملاحظات (البحث والمطابقة)", width="large"),
                     "Unit_Price": st.column_config.NumberColumn("السعر", format="%.2f")
                 },
                 use_container_width=True,
-                key="v4_stable_editor"
+                key="v5_stable_pricing"
             )
 
-            if st.button("🚀 اعتماد وحفظ"):
+            # 5. الحفظ النهائي وتحديث الماستر
+            if st.button("🚀 اعتماد الفاتورة وحفظ الأصناف الجديدة"):
                 m_df, m_names = load_master()
-                new_additions = []
+                new_data = []
                 for _, row in edited_df.iterrows():
-                    name = str(row['REMARKS']).strip()
-                    price = float(row['Unit_Price'])
-                    if name != "" and name not in m_names:
-                        new_additions.append({m_item: name, m_price: price})
-                        m_names.append(name)
+                    r_name = str(row['REMARKS']).strip()
+                    r_price = float(row['Unit_Price'])
+                    if r_name != "" and r_name not in m_names:
+                        new_data.append({m_item: r_name, m_price: r_price})
+                        m_names.append(r_name)
                 
-                if new_additions:
-                    pd.concat([m_df, pd.DataFrame(new_additions)], ignore_index=True).to_excel(MASTER_FILE, index=False)
-                    st.success("✅ تم تحديث الماستر بالبيانات الجديدة!")
+                if new_data:
+                    pd.concat([m_df, pd.DataFrame(new_data)], ignore_index=True).to_excel(MASTER_FILE, index=False)
+                    st.success("✅ تم تحديث الماستر بالأصناف الجديدة!")
 
-                # عرض الحساب النهائي
+                # عرض الحسابات
                 edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
                 edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
                 st.dataframe(edited_df, use_container_width=True)
-                st.metric("الإجمالي الكلي", f"{edited_df['Total'].sum():,.2f} EGP")
+                st.metric("الإجمالي", f"{edited_df['Total'].sum():,.2f} EGP")
 
     except Exception as e:
-        st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
+        st.error(f"خطأ في معالجة البيانات: {e}")
 else:
-    st.info("يرجى رفع ملف إكسيل للبدء في عملية التسعير.")
-            if not master_names: return str(text)
-            match, score = process.extractOne(str(text), master_names, scorer=fuzz.token_set_ratio)
-            return match if score > 70 else str(text)
-
-        df_client['Item'] = df_client[c_item]
-        df_client['REMARKS'] = df_client[c_item].apply(quick_match)
-        price_dict = dict(zip(master_df[m_item], master_df[m_price]))
-        df_client['Unit_Price'] = df_client['REMARKS'].map(price_dict).fillna(0.0)
-        st.session_state['v_data'] = df_client[['Item', 'REMARKS', c_qty, 'Unit_Price']]
-
-    if 'v_data' in st.session_state:
-        # حل مشكلة البحث: شريط بحث خارجي لتجنب أخطاء الجدول
-        st.markdown("---")
-        st.subheader("🔎 مساعد البحث السريع")
-        search_query = st.text_input("ابحث عن صنف في الماستر لنسخ اسمه:")
-        if search_query:
-            results = process.extract(search_query, master_names, limit=5)
-            st.write("أصناف مقترحة (انسخ الاسم وضعه في الجدول):")
-            for r in results:
-                st.code(r[0]) # يظهر الاسم في صندوق كود ليسهل نسخه بضغطة واحدة
-
-        # الجدول التفاعلي (تم حذف suggestions لتجنب TypeError)
-        edited_df = st.data_editor(
-            st.session_state['v_data'],
-            column_config={
-                "Item": st.column_config.TextColumn("الصنف المطلوب", disabled=True),
-                "REMARKS": st.column_config.TextColumn("ملاحظات (اكتب أو الصق الاسم هنا)", width="large"),
-                "Unit_Price": st.column_config.NumberColumn("السعر", format="%.2f")
-            },
-            use_container_width=True,
-            key="stable_editor_v4"
-        )
-
-        if st.button("🚀 اعتماد وحفظ"):
-            m_df, m_names = load_master()
-            new_additions = []
-            for _, row in edited_df.iterrows():
-                name = str(row['REMARKS']).strip()
-                price = float(row['Unit_Price'])
-                if name != "" and name not in m_names:
-                    new_additions.append({m_item: name, m_price: price})
-                    m_names.append(name)
-            
-            if new_additions:
-                pd.concat([m_df, pd.DataFrame(new_additions)], ignore_index=True).to_excel(MASTER_FILE, index=False)
-                st.success("✅ تم تحديث الماستر بالبيانات الجديدة!")
-
-            # الحسابات النهائية
-            edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
-            edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
-            st.dataframe(edited_df, use_container_width=True)
-            st.metric("الإجمالي", f"{edited_df['Total'].sum():,.2f} EGP")
+    st.info("يرجى رفع ملف إكسيل للبدء.")
 
