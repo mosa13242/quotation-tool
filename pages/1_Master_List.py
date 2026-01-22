@@ -1,29 +1,24 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import os
 
-st.title("Master List")
+st.set_page_config(page_title="Master List Management", layout="wide")
+st.title("🗂️ إدارة قائمة الأسعار (Master List)")
 
-uploaded = st.file_uploader(
-    "Upload Master List Excel",
-    type=["xlsx"]
-)
+MASTER_FILE = "master_list.xlsx"
 
-if uploaded:
-    df = pd.read_excel(uploaded)
+# رفع ملف جديد لتحديث الماستر ليست
+uploaded_master = st.file_uploader("ارفع ملف Excel لتحديث قائمة الأسعار الأساسية", type=["xlsx"])
 
-    required_cols = ["Item", "Unit", "Unit_Price", "VAT_Percent"]
-    df.columns = df.columns.str.strip()
+if uploaded_master:
+    df_master = pd.read_excel(uploaded_master)
+    df_master.to_excel(MASTER_FILE, index=False)
+    st.success("✅ تم تحديث قائمة الأسعار بنجاح!")
 
-    if not all(col in df.columns for col in required_cols):
-        st.error("Excel must contain columns: Item, Unit, Unit_Price, VAT_Percent")
-        st.stop()
-
-    st.dataframe(df)
-
-    if st.button("Save Master List"):
-        conn = sqlite3.connect("master.db")
-        df.to_sql("master_list", conn, if_exists="replace", index=False)
-        conn.close()
-        st.success("Master List saved successfully ✅")
-
+# عرض القائمة الحالية إذا كانت موجودة
+if os.path.exists(MASTER_FILE):
+    st.subheader("القائمة الحالية")
+    current_master = pd.read_excel(MASTER_FILE)
+    st.dataframe(current_master, use_container_width=True)
+else:
+    st.warning("⚠️ لا توجد قائمة أسعار حالية. يرجى رفع ملف master_list.xlsx")
