@@ -5,10 +5,19 @@ import os
 st.set_page_config(page_title="Master List", layout="wide")
 st.title("📦 Master List")
 
-MASTER_PATH = "data/master_list.xlsx"
+# =========================
+# المسارات
+# =========================
+DATA_DIR = "data"
+MASTER_PATH = os.path.join(DATA_DIR, "master_list.xlsx")
 
 # =========================
-# تحميل أو إنشاء الماستر
+# إنشاء فولدر data لو مش موجود
+# =========================
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# =========================
+# تحميل أو إنشاء ملف الماستر
 # =========================
 if not os.path.exists(MASTER_PATH):
     df_master = pd.DataFrame(columns=["Item", "Unit_Price"])
@@ -19,7 +28,8 @@ else:
 # =========================
 # تأكيد الأعمدة
 # =========================
-if "Item" not in df_master.columns or "Unit_Price" not in df_master.columns:
+required_cols = {"Item", "Unit_Price"}
+if not required_cols.issubset(df_master.columns):
     st.error("❌ ملف الماستر يجب أن يحتوي على الأعمدة: Item | Unit_Price")
     st.stop()
 
@@ -32,7 +42,7 @@ df_master["Unit_Price"] = pd.to_numeric(
 ).fillna(0)
 
 # =========================
-# عرض وتعديل الماستر
+# عرض وتعديل البيانات
 # =========================
 st.subheader("✏️ تعديل الأصناف والأسعار")
 
