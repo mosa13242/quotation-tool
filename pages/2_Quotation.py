@@ -4,40 +4,55 @@ import sqlite3
 from io import BytesIO
 
 st.set_page_config(page_title="Quotation", layout="wide")
-
 st.title("Quotation")
 
-# ======================
-# Database
-# ======================
+# ---------------------------
+# DB CONNECTION
+# ---------------------------
 conn = sqlite3.connect("quotation.db", check_same_thread=False)
 
-master_df = pd.read_sql(
-    "SELECT Item, Unit, Unit_Price, VAT_Percent FROM master_items",
-    conn
-)
+# ---------------------------
+# LOAD MASTER LIST
+# ---------------------------
+try:
+    master_df = pd.read_sql("SELECT * FROM master_items", conn)
+except Exception as e:
+    st.error("Master list not found. Please upload Master List first.")
+    st.stop()
 
-# ======================
-# Upload file
-# ======================
+# Normalize column names
+master_df.columns = master_df.columns.str.strip()
+
+# ---------------------------
+# UPLOAD QUOTATION FILE
+# ---------------------------
 uploaded_file = st.file_uploader(
     "Upload Quotation Excel (Item + Quantity)",
     type=["xlsx"]
 )
 
-if uploaded_file is not None:
+if uploaded_file:
     quote_df = pd.read_excel(uploaded_file)
     quote_df.columns = quote_df.columns.str.strip()
 
-    if "Item" not in quote_df.columns or "Quantity" not in quote_df.columns:
-        st.error("Excel must contain Item and Quantity columns")
+    # ---------------------------
+    # VALIDATION
+    # ---------------------------
+    required_cols = ["Item", "Quantity"]
+    missing = [c for c in required_cols if c not in quote_df.columns]
+
+    if missing:
+        st.error(f"Missing columns in Excel: {missing}")
         st.stop()
 
+    # Convert Quantity to numeric
     quote_df["Quantity"] = pd.to_numeric(
-        quote_df["Quantity"],
-        errors="coerce"
+        quote_df["Quantity"], errors="coerce"
     ).fillna(0)
 
+    # ---------------------------
+    # MERGE WITH MASTER
+    # ---------------------------
     merged = pd.merge(
         quote_df,
         master_df,
@@ -45,14 +60,18 @@ if uploaded_file is not None:
         how="left"
     )
 
+    if merged["Unit_Price"].isna().any():
+        st.warning("Some items were not found in Master List")
+
+    # ---------------------------
+    # CALCULATIONS
+    # ---------------------------
     merged["Unit_Price"] = pd.to_numeric(
-        merged["Unit_Price"],
-        errors="coerce"
+        merged["Unit_Price"], errors="coerce"
     ).fillna(0)
 
     merged["VAT_Percent"] = pd.to_numeric(
-        merged["VAT_Percent"],
-        errors="coerce"
+        merged["VAT_Percent"], errors="coerce"
     ).fillna(0)
 
     merged["Total_Before_VAT"] = (
@@ -67,25 +86,30 @@ if uploaded_file is not None:
         merged["Total_Before_VAT"] + merged["VAT_Amount"]
     )
 
+    # ---------------------------
+    # DISPLAY TABLE
+    # ---------------------------
     st.subheader("Quotation Details")
     st.dataframe(merged, use_container_width=True)
 
-    total_before = merged["Total_Before_VAT"].sum()
-    total_vat = merged["VAT_Amount"].sum()
-    grand_total = merged["Total_After_VAT"].sum()
+    # ---------------------------
+    # TOTALS
+    # ---------------------------
+    col1, col2, col3 = st.columns(3)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Before VAT", f"{total_before:,.2f}")
-    c2.metric("VAT Amount", f"{total_vat:,.2f}")
-    c3.metric("Grand Total", f"{grand_total:,.2f}")
+    with col1:
+        st.metric(
+            "Total Before VAT",
+            f"{merged['Total_Before_VAT'].sum():,.2f}"
+        )
 
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        merged.to_excel(writer, index=False)
+    with col2:
+        st.metric(
+            "VAT Amount",
+            f"{merged['VAT_Amount'].sum():,.2f}"
+        )
 
-    st.download_button(
-        "Download Quotation Excel",
-        data=output.getvalue(),
-        file_name="Quotation.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    with col3:
+        st.metric(
+            "Grand Total",
+            f"{merged['Tota]()
