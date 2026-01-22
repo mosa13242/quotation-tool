@@ -1,74 +1,51 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-import pdfplumber
+
+st.set_page_config(page_title="Quotation Tool", layout="wide")
 
 st.title("Quotation Tool")
 st.write("Upload Excel or PDF file (Item + Quantity)")
 
-# =========================
-# Load Master List
-# =========================
-try:
-    conn = sqlite3.connect("master.db")
-    master_df = pd.read_sql("SELECT * FROM master_list", conn)
-    conn.close()
-except:
-    st.error("Master list not found. Upload it first.")
-    st.stop()
+# تحميل الملف
+uploaded_file = st.file_uploader("Upload Quotation File", type=["xlsx", "pdf"])
 
-master_df.columns = master_df.columns.str.strip()
-master_df["Item"] = master_df["Item"].astype(str).str.strip()
+if uploaded_file is not None:
+    try:
+        # قراءة ملف الإكسل
+        if uploaded_file.name.endswith('.xlsx'):
+            quote_df = pd.read_excel(uploaded_file)
+            
+            # 1. تنظيف أسماء الأعمدة (إزالة المسافات الزائدة وتحويلها لنص موحد)
+            quote_df.columns = quote_df.columns.str.strip()
+            
+            # 2. عرض الأعمدة الموجودة للتأكد (اختياري - يمكنك حذفه لاحقاً)
+            st.write("Columns found in file:", list(quote_df.columns))
+            
+            # 3. التحقق من وجود الأعمدة المطلوبة قبل الحساب
+            required_cols = ["Quantity", "Unit_Price"]
+            
+            # فحص إذا كانت الأعمدة موجودة (حتى لو كانت بحروف صغيرة)
+            # سنقوم بتحويل أسماء الأعمدة كلها لحروف كبيرة لتسهيل المقارنة
+            col_map = {col.lower(): col for col in quote_df.columns}
+            
+            if "quantity" in col_map and "unit_price" in col_map:
+                q_col = col_map["quantity"]
+                p_col = col_map["unit_price"]
+                
+                # إجراء العملية الحسابية
+                quote_df["Subtotal"] = quote_df[q_col] * quote_df[p_col]
+                
+                st.success("Calculation successful!")
+                st.dataframe(quote_df)
+            else:
+                st.error(f"Missing columns! Make sure the file has: {required_cols}")
+                st.info(f"Available columns are: {list(quote_df.columns)}")
 
-# =========================
-# Upload File
-# =========================
-uploaded = st.file_uploader(
-    "Upload Quotation File",
-    type=["xlsx", "pdf"]
-)
+        elif uploaded_file.name.endswith('.pdf'):
+            st.info("PDF processing logic goes here...")
 
-if uploaded:
-    # -------- Excel --------
-    if uploaded.name.endswith(".xlsx"):
-        quote_df = pd.read_excel(uploaded)
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
-    # -------- PDF --------
-    else:
-        rows = []
-        with pdfplumber.open(uploaded) as pdf:
-            for page in pdf.pages:
-                table = page.extract_table()
-                if table:
-                    rows.extend(table)
-
-        if not rows:
-            st.error("Could not read table from PDF")
-            st.stop()
-
-        quote_df = pd.DataFrame(rows[1:], columns=rows[0])
-
-    # =========================
-    # CLEAN COLUMNS (CRITICAL)
-    # =========================
-    quote_df.columns = (
-        quote_df.columns
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "")
-    )
-
-    # =========================
-    # Detect Quantity Column
-    # =========================
-    qty_col = None
-    for col in quote_df.columns:
-        if "qty" in col or "quantity" in col:
-            qty_col = col
-            break
-
-    if qty_col is None:
-        st.error("Quantity column not found (Qty / Quantity)")
-        st.write("Detec
-
+else:
+    st.info("Please upload an Excel file to start.")
