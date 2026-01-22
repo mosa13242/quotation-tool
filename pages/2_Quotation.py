@@ -6,25 +6,30 @@ st.set_page_config(page_title="Quotation", layout="wide")
 st.title("Quotation")
 
 # بيانات تجريبية
-data = {
+df = pd.DataFrame({
     "Item": ["Item A", "Item B", "Item C"],
     "REMARKS": ["", "", ""],
-}
+})
 
-df = pd.DataFrame(data)
+master_names = [
+    "Option 1",
+    "Option 2",
+    "Option 3"
+]
 
-master_names = ["Option 1", "Option 2", "Option 3"]
-
+# ✅ IMPORTANT: multiline string صح
 st.info("""
-💡 للاختيار، اكتب اسمًا موجودًا أو ابدأ بالكتابة في REMARKS
+💡 للاختيار، اكتب اسمًا موجودًا
+أو ابدأ بالكتابة في REMARKS
 """)
 
 edited_df = st.data_editor(
     df,
     use_container_width=True,
+    hide_index=True,
     column_config={
         "Item": st.column_config.TextColumn(
-            "Item",
+            label="Item",
             disabled=True
         ),
         "REMARKS": st.column_config.TextColumn(
@@ -33,10 +38,8 @@ edited_df = st.data_editor(
             suggestions=master_names,
             width="large"
         ),
-    },
-    hide_index=True
+    }
 )
 
-st.subheader("النتيجة")
+st.subheader("Preview")
 st.dataframe(edited_df, use_container_width=True)
-
