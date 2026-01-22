@@ -1,45 +1,43 @@
 import streamlit as st
 import pandas as pd
 
-# إعداد الصفحة
-st.set_page_config(
-    page_title="Quotation",
-    layout="wide"
-)
+st.set_page_config(page_title="Quotation", layout="wide")
 
 st.title("Quotation")
 
-# بيانات تجريبية
-df = pd.DataFrame({
-    "Item": [
-        "Item A",
-        "Item B",
-        "Item C"
-    ],
-    "REMARKS": [
-        "",
-        "",
-        ""
-    ]
-})
+# رسالة إرشادية
+st.info("💡 للاختيار اكتب اسمًا موجودًا أو ابدأ بالكتابة في REMARKS")
 
-# بيانات الاقتراحات
+# ===============================
+# بيانات تجريبية (غيّرها براحتك)
+# ===============================
 master_names = [
-    "Option 1",
-    "Option 2",
-    "Option 3"
+    "Item A",
+    "Item B",
+    "Item C",
+    "Service X",
+    "Service Y"
 ]
 
-# رسالة توضيحية (مهمة – بدون كسر string)
-st.info("""
-💡 للاختيار اكتب اسمًا موجودًا
-أو ابدأ بالكتابة في REMARKS
-""")
+# إنشاء DataFrame مبدئي
+if "quotation_df" not in st.session_state:
+    st.session_state.quotation_df = pd.DataFrame(
+        {
+            "Item": [""],
+            "REMARKS": [""],
+            "Quantity": [1],
+            "Unit Price": [0.0],
+        }
+    )
 
+df = st.session_state.quotation_df
+
+# ===============================
 # جدول الإدخال
+# ===============================
 edited_df = st.data_editor(
     df,
-    hide_index=True,
+    num_rows="dynamic",
     use_container_width=True,
     column_config={
         "Item": st.column_config.TextColumn(
@@ -48,16 +46,38 @@ edited_df = st.data_editor(
         ),
         "REMARKS": st.column_config.TextColumn(
             label="REMARKS",
-            help="اكتب ملاحظة أو اختر من الاقتراحات",
-            suggestions=master_names,
-            width="large"
+            help="اختر من الاقتراحات أو اكتب يدويًا",
+            suggestions=master_names
+        ),
+        "Quantity": st.column_config.NumberColumn(
+            label="Quantity",
+            min_value=0,
+            step=1
+        ),
+        "Unit Price": st.column_config.NumberColumn(
+            label="Unit Price",
+            min_value=0.0,
+            step=0.01,
+            format="%.2f"
         ),
     }
 )
 
-# عرض النتيجة
-st.subheader("Preview")
-st.dataframe(
-    edited_df,
-    use_container_width=True
-)
+# حفظ التعديلات
+st.session_state.quotation_df = edited_df
+
+# ===============================
+# حساب الإجمالي
+# ===============================
+if not edited_df.empty:
+    edited_df["Total"] = edited_df["Quantity"] * edited_df["Unit Price"]
+
+    st.subheader("Summary")
+    st.dataframe(
+        edited_df,
+        use_container_width=True
+    )
+
+    grand_total = edited_df["Total"].sum()
+    st.success(f"Grand Total: {grand_total:,.2f}")
+
