@@ -20,7 +20,7 @@ except:
 # ======================
 uploaded_file = st.file_uploader(
     "Upload Quotation Excel (Item + Quantity)",
-    type=["xlsx"]
+    type=["xlsx", "pdf"]
 )
 
 if uploaded_file is not None:
