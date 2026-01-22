@@ -56,3 +56,7 @@ if uploaded_file:
         # استخدام TextColumn لتوفير حرية المسح والكتابة
         edited_df = st.data_editor(
             st.session_state['quotation_data'],
+            column_config={
+                "REMARKS": st.column_config.TextColumn(
+                    "الصنف (امسح واكتب الجديد هنا)",
+                    suggestions=master
