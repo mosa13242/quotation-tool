@@ -105,10 +105,18 @@ if uploaded_file:
     # =========================
     # Download Excel
     # =========================
-    output = merged.copy()
-    st.download_button(
-        "Download Quotation Excel",
-        data=output.to_excel(index=False),
-        file_name="Quotation.xlsx"
+   from io import BytesIO
+
+buffer = BytesIO()
+with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    output.to_excel(writer, index=False, sheet_name="Quotation")
+
+st.download_button(
+    label="Download Quotation Excel",
+    data=buffer.getvalue(),
+    file_name="Quotation.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
     )
 
