@@ -1,77 +1,85 @@
 import streamlit as st
 import pandas as pd
 import os
-from thefuzz import process, fuzz  # مكتبة البحث الذكي بالتقريب
+from thefuzz import process, fuzz
 
-st.set_page_config(page_title="نظام التسعير الذكي", layout="wide")
+st.set_page_config(page_title="نظام التسعير الذكي المتطور", layout="wide")
 
-# 1. تحميل قائمة الأسعار (Master List)
+# 1. تحميل الماستر ليست
 MASTER_FILE = "master_list.xlsx"
 if not os.path.exists(MASTER_FILE):
-    st.error("❌ ملف الأسعار غير موجود. يرجى رفعه من صفحة Master List.")
+    st.error("❌ ملف الأسعار غير موجود. ارفعه من صفحة Master List.")
     st.stop()
 
-# قراءة الماستر وتجهيزه
 master_df = pd.read_excel(MASTER_FILE)
 master_df.columns = [str(c).strip() for c in master_df.columns]
+master_names = master_df[master_df.columns[0]].astype(str).tolist() # افتراض أول عمود هو الاسم
 
-st.title("🤖 نظام التسعير الذكي (البحث بالتقريب)")
+st.title("🤖 التسعير الذكي مع إمكانية التعديل اليدوي")
 
-# 2. رفع طلب العميل
-uploaded_file = st.file_uploader("ارفع طلب العميل (Excel فقط)", type=["xlsx"])
+uploaded_file = st.file_uploader("ارفع طلب العميل (Excel)", type=["xlsx"])
 
 if uploaded_file:
     df_client = pd.read_excel(uploaded_file)
     df_client.columns = [str(c).strip() for c in df_client.columns]
     
-    # واجهة اختيار الأعمدة ديناميكياً لتجنب KeyError
-    st.subheader("⚙️ إعدادات المطابقة")
+    # إعدادات الأعمدة
     col1, col2 = st.columns(2)
     with col1:
-        c_item = st.selectbox("عمود اسم الصنف (عندك):", df_client.columns)
+        c_item = st.selectbox("عمود الصنف (عندك):", df_client.columns)
         c_qty = st.selectbox("عمود الكمية (عندك):", df_client.columns)
     with col2:
         m_item = st.selectbox("عمود الصنف (في الماستر):", master_df.columns)
         m_price = st.selectbox("عمود السعر (في الماستر):", master_df.columns)
 
-    # منزلق للتحكم في دقة الذكاء (Threshold)
-    threshold = st.slider("دقة المطابقة الذكية (80% هي الأفضل):", 50, 100, 80)
+    if st.button("🔍 تحليل ومطابقة الأصناف"):
+        # تنظيف وتحضير البيانات
+        master_names = master_df[m_item].astype(str).tolist()
+        price_map = dict(zip(master_df[m_item], master_df[m_price]))
 
-    if st.button("🚀 ابدأ التسعير الذكي"):
-        with st.spinner('جاري البحث في الماستر ليست ومطابقة الأصناف...'):
-            
-            # قائمة الأسماء من الماستر للبحث فيها
-            master_names = master_df[m_item].astype(str).tolist()
-            
-            # دالة البحث الذكي
-            def get_best_match(name):
-                # يبحث عن أقرب اسم صنف في الماستر
-                res = process.extractOne(str(name), master_names, scorer=fuzz.token_sort_ratio)
-                if res and res[1] >= threshold:
-                    return res[0] # يعيد الاسم كما هو في الماستر
-                return "غير موجود"
+        # دالة البحث الجزئي الذكي (لحساب كلمة CANNULA المشتركة)
+        def smart_search(name):
+            # نستخدم partial_ratio للبحث عن كلمات مشتركة داخل الجملة
+            match, score = process.extractOne(str(name), master_names, scorer=fuzz.partial_ratio)
+            return match if score > 60 else "تحتاج مراجعة"
 
-            # تنفيذ المطابقة ووضع النتيجة في REMARKS
-            df_client['REMARKS'] = df_client[c_item].apply(get_best_match)
-            
-            # جلب السعر بناءً على الاسم الموجود في REMARKS (الربط المضمون)
-            price_map = dict(zip(master_df[m_item], master_df[m_price]))
-            df_client['Unit_Price'] = df_client['REMARKS'].map(price_map).fillna(0)
-            
-            # الحسابات المالية نهائية
-            df_client[c_qty] = pd.to_numeric(df_client[c_qty], errors='coerce').fillna(0)
-            df_client['Unit_Price'] = pd.to_numeric(df_client['Unit_Price'], errors='coerce').fillna(0)
-            df_client["Total"] = df_client[c_qty] * df_client['Unit_Price']
-            
-            st.success("✅ اكتملت المطابقة!")
-            
-            # عرض النتيجة (سيظهر اسم صنف العميل وبجانبه REMARKS من الماستر)
-            st.dataframe(df_client, use_container_width=True)
-            
-            # عرض الإجمالي
-            total_val = df_client["Total"].sum()
-            st.metric("إجمالي القيمة التقديرية", f"{total_val:,.2f} EGP")
+        df_client['REMARKS'] = df_client[c_item].apply(smart_search)
+        st.session_state['df_result'] = df_client
+        st.session_state['price_map'] = price_map
 
-            # زر تحميل النتيجة
-            csv_data = df_client.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 تحميل النتيجة كملف Excel (CSV)", csv_data, "Quotation_Results.csv", "text/csv")
+    # --- خيار التعديل اليدوي (Manual Edit) ---
+    if 'df_result' in st.session_state:
+        st.subheader("📝 مراجعة وتعديل المطابقة")
+        st.write("يمكنك تغيير الاختيار في عمود REMARKS إذا لم يكن دقيقاً:")
+        
+        # استخدام st.data_editor للسماح للمستخدم بالاختيار اليدوي
+        edited_df = st.data_editor(
+            st.session_state['df_result'],
+            column_config={
+                "REMARKS": st.column_config.SelectboxColumn(
+                    "أقرب صنف في الماستر (EDIT)",
+                    help="اختر الصنف الصحيح إذا كان البحث التلقائي غير دقيق",
+                    options=master_names,
+                    required=True,
+                )
+            },
+            disabled=[c_item, c_qty], # منع تعديل بيانات العميل الأصلية
+            hide_index=True,
+            use_container_width=True
+        )
+
+        if st.button("🚀 اعتماد التسعير النهائي"):
+            # جلب الأسعار بناءً على التعديلات اليدوية
+            price_map = st.session_state['price_map']
+            edited_df['Unit_Price'] = edited_df['REMARKS'].map(price_map).fillna(0)
+            
+            edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
+            edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
+            
+            st.success("✅ تم تحديث الأسعار بناءً على اختياراتك")
+            st.dataframe(edited_df, use_container_width=True)
+            st.metric("الإجمالي النهائي", f"{edited_df['Total'].sum():,.2f} EGP")
+            
+            # تحميل النتيجة
+            csv = edited_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 تحميل ملف التسعير النهائي", csv, "Final_Quotation.csv", "text/csv")
