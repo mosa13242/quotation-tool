@@ -3,12 +3,12 @@ import pandas as pd
 import os
 from thefuzz import fuzz, process
 
-st.set_page_config(page_title="نظام التسعير الذكي", layout="wide")
+st.set_page_config(page_title="نظام التسعير المستقر", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
 
-# تحميل بيانات الماستر لضمان وجود قائمة البحث دايماً
-def load_master_list():
+# وظيفة تحميل الماستر - تضمن تحديث قائمة البحث دايماً
+def load_master_safe():
     if not os.path.exists(MASTER_FILE):
         df = pd.DataFrame(columns=["Item", "Price"])
         df.to_excel(MASTER_FILE, index=False)
@@ -17,9 +17,9 @@ def load_master_list():
     df.columns = [str(c).strip() for c in df.columns]
     return df, df[df.columns[0]].astype(str).tolist()
 
-master_df, master_names = load_master_list()
+master_df, master_names = load_master_safe()
 
-st.title("🛡️ نظام التسعير (البحث والحفظ التلقائي)")
+st.title("🛡️ نظام التسعير (بحث + إضافة + حفظ)")
 
 uploaded_file = st.file_uploader("ارفع طلب العميل (Excel)", type=["xlsx"])
 
@@ -27,15 +27,15 @@ if uploaded_file:
     df_client = pd.read_excel(uploaded_file)
     df_client.columns = [str(c).strip() for c in df_client.columns]
     
-    col_a, col_b = st.columns(2)
-    with col_a:
-        c_item = st.selectbox("عمود الصنف (عندك):", df_client.columns)
-        c_qty = st.selectbox("عمود الكمية (عندك):", df_client.columns)
-    with col_b:
-        m_item = st.selectbox("عمود الصنف (في الماستر):", master_df.columns if not master_df.empty else ["Item"])
-        m_price = st.selectbox("عمود السعر (في الماستر):", master_df.columns if not master_df.empty else ["Price"])
+    c1, c2 = st.columns(2)
+    with c1:
+        c_item = st.selectbox("عمود الصنف (طلبك):", df_client.columns)
+        c_qty = st.selectbox("عمود الكمية (طلبك):", df_client.columns)
+    with c2:
+        m_item = st.selectbox("عمود الصنف (الماستر):", master_df.columns if not master_df.empty else ["Item"])
+        m_price = st.selectbox("عمود السعر (الماستر):", master_df.columns if not master_df.empty else ["Price"])
 
-    if st.button("🔍 تنفيذ مطابقة"):
+    if st.button("🔍 تنفيذ المطابقة والبحث"):
         def smart_match(text):
             if not master_names: return str(text)
             match, score = process.extractOne(str(text), master_names, scorer=fuzz.token_set_ratio)
@@ -44,20 +44,19 @@ if uploaded_file:
         df_client['REMARKS'] = df_client[c_item].apply(smart_match)
         price_map = dict(zip(master_df[m_item], master_df[m_price]))
         df_client['Unit_Price'] = df_client['REMARKS'].map(price_map).fillna(0.0)
-        st.session_state['df_pricing'] = df_client
+        st.session_state['df_working'] = df_client
 
-    if 'df_pricing' in st.session_state:
-        st.info("💡 البحث شغال: اكتب في REMARKS وهتظهرلك الاقتراحات؛ أو اكتب اسم وسعر جديد وهيتحفظوا.")
+    if 'df_working' in st.session_state:
+        st.success("💡 ميزة البحث: ابدأ الكتابة في REMARKS للاختيار، أو اكتب اسماً جديداً وسعراً لحفظهما.")
         
-        # هنا دمجنا البحث (suggestions) مع الكتابة الحرة (TextColumn)
+        # دمج البحث مع الكتابة الحرة باستخدام TextColumn
         edited_df = st.data_editor(
-            st.session_state['df_pricing'],
+            st.session_state['df_working'],
             column_config={
                 "REMARKS": st.column_config.TextColumn(
-                    "الصنف (بحث أو اكتب جديداً)",
-                    suggestions=master_names, # ميزة البحث والاقتراحات
-                    width="large",
-                    required=True
+                    "الصنف (بحث أو جديد)",
+                    suggestions=master_names,  # تفعيل البحث والاقتراحات
+                    width="large"
                 ),
                 "Unit_Price": st.column_config.NumberColumn(
                     "السعر (تعديل وحفظ)", 
@@ -67,30 +66,30 @@ if uploaded_file:
             },
             disabled=[c_item, c_qty],
             use_container_width=True,
-            key="v11_stable_editor"
+            key="final_stable_editor_v15"
         )
 
-        if st.button("🚀 اعتماد وحفظ الأصناف والأسعار"):
-            new_records = []
-            m_df_fresh, m_names_fresh = load_master_list()
+        if st.button("🚀 اعتماد وحفظ التعديلات في الماستر"):
+            new_rows = []
+            m_df_fresh, m_names_fresh = load_master_safe()
             
             for index, row in edited_df.iterrows():
-                r_name = str(row['REMARKS']).strip()
-                r_price = float(row['Unit_Price'])
+                name_val = str(row['REMARKS']).strip()
+                price_val = float(row['Unit_Price'])
                 
-                # لو كتبت اسم جديد مش موجود في الماستر، هيضيفه هو وسعره
-                if r_name not in m_names_fresh and r_name != "":
-                    new_records.append({m_item: r_name, m_price: r_price})
-                    m_names_fresh.append(r_name)
+                # حفظ الصنف الجديد مع سعره المكتوب يدوياً
+                if name_val not in m_names_fresh and name_val != "":
+                    new_rows.append({m_item: name_val, m_price: price_val})
+                    m_names_fresh.append(name_val)
 
-            if new_records:
-                new_data = pd.DataFrame(new_records)
+            if new_rows:
+                new_data = pd.DataFrame(new_rows)
                 updated_master = pd.concat([m_df_fresh, new_data], ignore_index=True)
                 updated_master.to_excel(MASTER_FILE, index=False)
-                st.success(f"✅ تم تسجيل {len(new_records)} صنف جديد بأسعارهم في الماستر!")
+                st.success(f"✅ تم حفظ {len(new_rows)} صنف جديد بأسعارهم في الماستر!")
 
-            # تحديث الحسابات النهائية
+            # تحديث العرض النهائي والحسابات
             edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
             edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
             st.dataframe(edited_df, use_container_width=True)
-            st.metric("الإجمالي", f"{edited_df['Total'].sum():,.2f} EGP")
+            st.metric("الإجمالي النهائي", f"{edited_df['Total'].sum():,.2f} EGP")
