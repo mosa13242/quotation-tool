@@ -1,84 +1,148 @@
 import streamlit as st
 import pandas as pd
 import os
-from thefuzz import fuzz, process
+from thefuzz import process
 
-st.set_page_config(layout="wide")
-st.title("💰 نظام التسعير والبحث الذكي")
-
-# 1. زر الرفع يظهر أولاً لضمان عدم اختفائه
-uploaded_file = st.file_uploader("📥 ارفع ملف الإكسيل هنا", type=["xlsx"])
+st.set_page_config(page_title="Quotation System", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
+CLIENT_FILE = "clients_prices.xlsx"
 
-def get_master():
-    if not os.path.exists(MASTER_FILE):
-        return pd.DataFrame(columns=["Item", "Price"]), []
-    df = pd.read_excel(MASTER_FILE)
-    df.columns = [str(c).strip() for c in df.columns]
-    return df, df[df.columns[0]].astype(str).unique().tolist()
+# -------------------------------
+# Create files if not exist
+# -------------------------------
 
-master_df, master_names = get_master()
+if not os.path.exists(MASTER_FILE):
+    pd.DataFrame(columns=["Item", "Price"]).to_excel(MASTER_FILE, index=False)
+
+if not os.path.exists(CLIENT_FILE):
+    pd.DataFrame(columns=["Client", "Item", "Price"]).to_excel(CLIENT_FILE, index=False)
+
+master_df = pd.read_excel(MASTER_FILE)
+clients_df = pd.read_excel(CLIENT_FILE)
+
+master_items = master_df["Item"].astype(str).tolist()
+
+# -------------------------------
+# UI
+# -------------------------------
+
+st.title("💰 نظام التسعير والبحث الذكي")
+
+# -------------------------------
+# CLIENT SECTION
+# -------------------------------
+
+st.subheader("👤 اختيار العميل")
+
+clients_list = sorted(clients_df["Client"].dropna().unique().tolist())
+
+col1, col2 = st.columns(2)
+
+with col1:
+    client_name = st.selectbox("اختر عميل موجود", [""] + clients_list)
+
+with col2:
+    new_client = st.text_input("➕ إضافة عميل جديد")
+
+if st.button("💾 حفظ العميل"):
+    if new_client:
+        new_row = pd.DataFrame([[new_client, "", ""]], columns=["Client", "Item", "Price"])
+        clients_df = pd.concat([clients_df, new_row], ignore_index=True)
+        clients_df.to_excel(CLIENT_FILE, index=False)
+        st.success("تم إضافة العميل")
+
+# -------------------------------
+# Upload file
+# -------------------------------
+
+st.divider()
+st.subheader("📂 رفع ملف طلب العميل")
+
+uploaded_file = st.file_uploader("ارفع ملف الطلب", type=["xlsx"])
 
 if uploaded_file:
-    try:
-        df_client = pd.read_excel(uploaded_file)
-        df_client.columns = [str(c).strip() for c in df_client.columns]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            c_item = st.selectbox("عمود الصنف (طلب العميل):", df_client.columns)
-            c_qty = st.selectbox("عمود الكمية (طلب العميل):", df_client.columns)
-        with col2:
-            m_item = st.selectbox("الصنف (في الماستر):", master_df.columns if not master_df.empty else ["Item"])
-            m_price = st.selectbox("السعر (في الماستر):", master_df.columns if not master_df.empty else ["Price"])
 
-        if st.button("🔍 تنفيذ المطابقة الذكية"):
-            def match_logic(text):
-                if not master_names: return str(text)
-                match, score = process.extractOne(str(text), master_names, scorer=fuzz.token_set_ratio)
-                return match if score > 70 else str(text)
+    request_df = pd.read_excel(uploaded_file)
 
-            # توزيع البيانات: الأصلي في Item والمقترح في REMARKS
-            df_client['Item'] = df_client[c_item]
-            df_client['REMARKS'] = df_client[c_item].apply(match_logic)
-            
-            p_map = dict(zip(master_df[m_item], master_df[m_price]))
-            df_client['Unit_Price'] = df_client['REMARKS'].map(p_map).fillna(0.0)
-            st.session_state['v_priced'] = df_client[['Item', 'REMARKS', c_qty, 'Unit_Price']]
+    st.write("📄 البيانات:")
+    st.dataframe(request_df)
 
-        if 'v_priced' in st.session_state:
-            # جدول التعديل المستقر بدون الخصائص المسببة للخطأ
-            edited_df = st.data_editor(
-                st.session_state['v_priced'],
-                column_config={
-                    "Item": st.column_config.TextColumn("الصنف المطلوب", disabled=True),
-                    "REMARKS": st.column_config.TextColumn("ملاحظات (البحث في الماستر)", width="large"),
-                    "Unit_Price": st.column_config.NumberColumn("السعر", format="%.2f")
-                },
-                use_container_width=True
-            )
+    item_col = st.selectbox("عمود الأصناف", request_df.columns)
+    qty_col = st.selectbox("عمود الكمية", request_df.columns)
 
-            if st.button("🚀 اعتماد وحفظ الأصناف الجديدة"):
-                m_curr, m_names_curr = get_master()
-                to_add = []
-                for _, row in edited_df.iterrows():
-                    name = str(row['REMARKS']).strip()
-                    price = float(row['Unit_Price'])
-                    # إضافة الصنف للماستر إذا لم يكن موجوداً
-                    if name != "" and name not in m_names_curr:
-                        to_add.append({m_item: name, m_price: price})
-                        m_names_curr.append(name)
-                
-                if to_add:
-                    pd.concat([m_curr, pd.DataFrame(to_add)], ignore_index=True).to_excel(MASTER_FILE, index=False)
-                    st.success("✅ تم تحديث الماستر بالأصناف والأسعار الجديدة!")
+    if st.button("🔍 تنفيذ المطابقة"):
 
-                # الحساب النهائي
-                edited_df[c_qty] = pd.to_numeric(edited_df[c_qty], errors='coerce').fillna(0)
-                edited_df['Total'] = edited_df[c_qty] * edited_df['Unit_Price']
-                st.dataframe(edited_df, use_container_width=True)
-                st.metric("الإجمالي الكلي", f"{edited_df['Total'].sum():,.2f} EGP")
+        results = []
 
-    except Exception as e:
-        st.error(f"حدث خطأ: {e}")
+        for _, row in request_df.iterrows():
+
+            item = str(row[item_col])
+
+            match, score = process.extractOne(item, master_items)
+
+            price = master_df.loc[master_df["Item"] == match, "Price"].values[0]
+
+            # Client price?
+            client_price = price
+
+            if client_name:
+                mask = (
+                    (clients_df["Client"] == client_name) &
+                    (clients_df["Item"] == match)
+                )
+                if mask.any():
+                    client_price = clients_df.loc[mask, "Price"].values[0]
+
+            results.append({
+                "Requested_Item": item,
+                "Matched_Item": match,
+                "Quantity": row[qty_col],
+                "Client_Price": client_price,
+                "Confirmed": False,
+                "Notes": ""
+            })
+
+        result_df = pd.DataFrame(results)
+
+        st.subheader("📊 النتائج")
+
+        edited_df = st.data_editor(
+            result_df,
+            use_container_width=True,
+            column_config={
+                "Confirmed": st.column_config.CheckboxColumn("✔ Confirm")
+            }
+        )
+
+        # -------------------------------
+        # SAVE CONFIRMED PRICES
+        # -------------------------------
+
+        if st.button("💾 حفظ الأسعار المؤكدة"):
+
+            if not client_name:
+                st.warning("اختر عميل أولاً")
+            else:
+
+                confirmed_rows = edited_df[edited_df["Confirmed"] == True]
+
+                for _, row in confirmed_rows.iterrows():
+
+                    mask = (
+                        (clients_df["Client"] == client_name) &
+                        (clients_df["Item"] == row["Matched_Item"])
+                    )
+
+                    if mask.any():
+                        clients_df.loc[mask, "Price"] = row["Client_Price"]
+                    else:
+                        new_row = pd.DataFrame(
+                            [[client_name, row["Matched_Item"], row["Client_Price"]]],
+                            columns=["Client", "Item", "Price"]
+                        )
+                        clients_df = pd.concat([clients_df, new_row], ignore_index=True)
+
+                clients_df.to_excel(CLIENT_FILE, index=False)
+
+                st.success("✅ تم حفظ أسعار العميل بنجاح")
