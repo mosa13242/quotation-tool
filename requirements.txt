@@ -1,7 +1,7 @@
-streamlit>=1.30
+streamlit
 pandas
 openpyxl
 thefuzz
 python-Levenshtein
+pdfplumber
 altair
-pdfplumbe
