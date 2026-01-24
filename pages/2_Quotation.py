@@ -1,148 +1,137 @@
 import streamlit as st
 import pandas as pd
-import os
 from thefuzz import process
+import os
 
-st.set_page_config(page_title="Quotation System", layout="wide")
-
-MASTER_FILE = "master_list.xlsx"
-CLIENT_FILE = "clients_prices.xlsx"
-
-# -------------------------------
-# Create files if not exist
-# -------------------------------
-
-if not os.path.exists(MASTER_FILE):
-    pd.DataFrame(columns=["Item", "Price"]).to_excel(MASTER_FILE, index=False)
-
-if not os.path.exists(CLIENT_FILE):
-    pd.DataFrame(columns=["Client", "Item", "Price"]).to_excel(CLIENT_FILE, index=False)
-
-master_df = pd.read_excel(MASTER_FILE)
-clients_df = pd.read_excel(CLIENT_FILE)
-
-master_items = master_df["Item"].astype(str).tolist()
-
-# -------------------------------
-# UI
-# -------------------------------
+st.set_page_config(layout="wide")
 
 st.title("💰 نظام التسعير والبحث الذكي")
 
-# -------------------------------
-# CLIENT SECTION
-# -------------------------------
+# --------------------------------------------------
+# LOAD MASTER
+# --------------------------------------------------
 
-st.subheader("👤 اختيار العميل")
+MASTER_FILE = "master_list.xlsx"
 
-clients_list = sorted(clients_df["Client"].dropna().unique().tolist())
+@st.cache_data
+def load_master():
+    if not os.path.exists(MASTER_FILE):
+        return pd.DataFrame()
+    df = pd.read_excel(MASTER_FILE)
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+master_df = load_master()
+
+if master_df.empty:
+    st.error("❌ الماستر ليست غير موجود")
+    st.stop()
+
+# --------------------------------------------------
+# MASTER COLUMN SELECT
+# --------------------------------------------------
+
+st.subheader("⚙️ إعدادات الماستر ليست")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    client_name = st.selectbox("اختر عميل موجود", [""] + clients_list)
+    master_item_col = st.selectbox(
+        "📦 عمود الأصناف في الماستر:",
+        master_df.columns,
+        key="master_item_col"
+    )
 
 with col2:
-    new_client = st.text_input("➕ إضافة عميل جديد")
+    master_price_col = st.selectbox(
+        "💰 عمود السعر في الماستر:",
+        master_df.columns,
+        key="master_price_col"
+    )
 
-if st.button("💾 حفظ العميل"):
-    if new_client:
-        new_row = pd.DataFrame([[new_client, "", ""]], columns=["Client", "Item", "Price"])
-        clients_df = pd.concat([clients_df, new_row], ignore_index=True)
-        clients_df.to_excel(CLIENT_FILE, index=False)
-        st.success("تم إضافة العميل")
-
-# -------------------------------
-# Upload file
-# -------------------------------
+# --------------------------------------------------
+# UPLOAD RFQ FILE
+# --------------------------------------------------
 
 st.divider()
-st.subheader("📂 رفع ملف طلب العميل")
+st.subheader("📤 ارفع ملف العميل")
 
-uploaded_file = st.file_uploader("ارفع ملف الطلب", type=["xlsx"])
+uploaded = st.file_uploader(
+    "ارفع Excel",
+    type=["xlsx"]
+)
 
-if uploaded_file:
+if not uploaded:
+    st.stop()
 
-    request_df = pd.read_excel(uploaded_file)
+rfq_df = pd.read_excel(uploaded)
+rfq_df.columns = [c.strip() for c in rfq_df.columns]
 
-    st.write("📄 البيانات:")
-    st.dataframe(request_df)
+st.success("✅ تم رفع الملف")
 
-    item_col = st.selectbox("عمود الأصناف", request_df.columns)
-    qty_col = st.selectbox("عمود الكمية", request_df.columns)
+# --------------------------------------------------
+# RFQ COLUMN SELECT
+# --------------------------------------------------
 
-    if st.button("🔍 تنفيذ المطابقة"):
+st.subheader("📑 أعمدة ملف العميل")
 
-        results = []
+c1, c2 = st.columns(2)
 
-        for _, row in request_df.iterrows():
+with c1:
+    rfq_item_col = st.selectbox(
+        "📦 عمود الصنف:",
+        rfq_df.columns
+    )
 
-            item = str(row[item_col])
+with c2:
+    rfq_qty_col = st.selectbox(
+        "🔢 عمود الكمية:",
+        rfq_df.columns
+    )
 
-            match, score = process.extractOne(item, master_items)
+# --------------------------------------------------
+# MATCH BUTTON
+# --------------------------------------------------
 
-            price = master_df.loc[master_df["Item"] == match, "Price"].values[0]
+if st.button("🔍 تنفيذ المطابقة الذكية"):
 
-            # Client price?
-            client_price = price
+    results = []
 
-            if client_name:
-                mask = (
-                    (clients_df["Client"] == client_name) &
-                    (clients_df["Item"] == match)
-                )
-                if mask.any():
-                    client_price = clients_df.loc[mask, "Price"].values[0]
+    master_items = master_df[master_item_col].astype(str).tolist()
 
-            results.append({
-                "Requested_Item": item,
-                "Matched_Item": match,
-                "Quantity": row[qty_col],
-                "Client_Price": client_price,
-                "Confirmed": False,
-                "Notes": ""
-            })
+    for _, row in rfq_df.iterrows():
 
-        result_df = pd.DataFrame(results)
+        item = str(row[rfq_item_col])
 
-        st.subheader("📊 النتائج")
+        match, score = process.extractOne(item, master_items)
 
-        edited_df = st.data_editor(
-            result_df,
-            use_container_width=True,
-            column_config={
-                "Confirmed": st.column_config.CheckboxColumn("✔ Confirm")
-            }
-        )
+        price_row = master_df.loc[
+            master_df[master_item_col] == match,
+            master_price_col
+        ]
 
-        # -------------------------------
-        # SAVE CONFIRMED PRICES
-        # -------------------------------
+        if not price_row.empty:
+            price = float(price_row.values[0])
+        else:
+            price = 0
 
-        if st.button("💾 حفظ الأسعار المؤكدة"):
+        results.append({
+            "الصنف المطلوب": item,
+            "الصنف المطابق": match,
+            "درجة التطابق": score,
+            "الكمية": row[rfq_qty_col],
+            "السعر": price
+        })
 
-            if not client_name:
-                st.warning("اختر عميل أولاً")
-            else:
+    result_df = pd.DataFrame(results)
 
-                confirmed_rows = edited_df[edited_df["Confirmed"] == True]
+    st.success("✅ تمت المطابقة")
 
-                for _, row in confirmed_rows.iterrows():
+    st.dataframe(result_df, use_container_width=True)
 
-                    mask = (
-                        (clients_df["Client"] == client_name) &
-                        (clients_df["Item"] == row["Matched_Item"])
-                    )
-
-                    if mask.any():
-                        clients_df.loc[mask, "Price"] = row["Client_Price"]
-                    else:
-                        new_row = pd.DataFrame(
-                            [[client_name, row["Matched_Item"], row["Client_Price"]]],
-                            columns=["Client", "Item", "Price"]
-                        )
-                        clients_df = pd.concat([clients_df, new_row], ignore_index=True)
-
-                clients_df.to_excel(CLIENT_FILE, index=False)
-
-                st.success("✅ تم حفظ أسعار العميل بنجاح")
+    # DOWNLOAD
+    st.download_button(
+        "⬇️ تحميل النتيجة",
+        result_df.to_excel(index=False),
+        file_name="quotation_result.xlsx"
+    )
