@@ -1,17 +1,15 @@
 import streamlit as st
 import pandas as pd
-from thefuzz import process
 import io
+from thefuzz import process
 
-st.set_page_config(layout="wide")
-
-st.title("📊 Quotation Tool")
-
-# =====================================
-# LOAD MASTER LIST
-# =====================================
+st.set_page_config(page_title="Quotation Tool", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
+
+# ============================
+# LOAD MASTER
+# ============================
 
 @st.cache_data
 def load_master():
@@ -21,73 +19,65 @@ def load_master():
 
 master_df = load_master()
 
-# --------- detect columns ----------
-cols_lower = {c.lower(): c for c in master_df.columns}
+# ============================
+# AUTO COLUMN DETECT
+# ============================
 
-def find_col(name_list):
-    for n in name_list:
-        if n.lower() in cols_lower:
-            return cols_lower[n.lower()]
+def find_col(possible):
+    for name in possible:
+        for col in master_df.columns:
+            if name.lower() == col.lower():
+                return col
     return None
 
-ITEM_COL = find_col(["item", "product", "name", "description"])
-PRICE_COL = find_col(["price", "unit price", "cost", "selling price", "rate"])
+ITEM_COL = find_col(["item", "product", "description", "name"])
+PRICE_COL = find_col(["price", "unit_price", "unit price", "cost", "selling"])
 
-if not ITEM_COL or not PRICE_COL:
-    st.error(
-        f"❌ الماستر لازم يحتوي على عمود صنف وعمود سعر.\n"
-        f"الأعمدة الموجودة: {list(master_df.columns)}"
-    )
+if not ITEM_COL:
+    st.error("❌ الماستر لازم يحتوي على عمود Item")
+    st.stop()
+
+if not PRICE_COL:
+    st.error(f"❌ لا يوجد عمود سعر. الأعمدة: {list(master_df.columns)}")
     st.stop()
 
 master_items = master_df[ITEM_COL].astype(str).tolist()
 
-# =====================================
-# UPLOAD REQUEST FILE
-# =====================================
+# ============================
+# UI
+# ============================
 
-uploaded = st.file_uploader("📤 ارفع ملف الطلب (Excel)", type=["xlsx"])
+st.title("📊 Quotation Tool")
 
-run_match = st.button("🔍 تنفيذ المطابقة الذكية")
+uploaded_file = st.file_uploader(
+    "📤 ارفع ملف الطلب (Excel)",
+    type=["xlsx"]
+)
 
-# =====================================
-# MATCH FUNCTION
-# =====================================
+if not uploaded_file:
+    st.stop()
 
-def match_item(text):
-    return process.extractOne(text, master_items)
+rfq_df = pd.read_excel(uploaded_file)
+rfq_df.columns = [c.strip() for c in rfq_df.columns]
 
-# =====================================
-# PROCESS
-# =====================================
+st.subheader("⚙️ اختار الأعمدة")
 
-if uploaded and run_match:
+item_col = st.selectbox("عمود الصنف", rfq_df.columns)
+qty_col = st.selectbox("عمود الكمية", rfq_df.columns)
 
-    req_df = pd.read_excel(uploaded)
-    req_df.columns = [c.strip() for c in req_df.columns]
+# ============================
+# MATCH BUTTON
+# ============================
 
-    req_cols_lower = {c.lower(): c for c in req_df.columns}
-
-    def find_req(name_list):
-        for n in name_list:
-            if n.lower() in req_cols_lower:
-                return req_cols_lower[n.lower()]
-        return None
-
-    REQ_ITEM_COL = find_req(["item", "product", "description", "name"])
-    QTY_COL = find_req(["qty", "quantity", "count", "amount"])
-
-    if not REQ_ITEM_COL:
-        st.error("❌ ملف الطلب لازم يحتوي عمود صنف")
-        st.stop()
+if st.button("🔍 تنفيذ المطابقة الذكية"):
 
     results = []
 
-    for _, row in req_df.iterrows():
+    for _, row in rfq_df.iterrows():
 
-        item_text = str(row[REQ_ITEM_COL])
+        query = str(row[item_col])
 
-        match, score = match_item(item_text)
+        match, score = process.extractOne(query, master_items)
 
         price_row = master_df[master_df[ITEM_COL] == match]
 
@@ -97,13 +87,11 @@ if uploaded and run_match:
             else 0
         )
 
-        qty = row[QTY_COL] if QTY_COL and QTY_COL in row else 1
-
         results.append({
-            "Requested Item": item_text,
+            "Requested Item": query,
             "Matched Item": match,
             "Match Score": score,
-            "Quantity": qty,
+            "Quantity": row[qty_col],
             "Price": price,
             "Remarks": match,
             "Confirm": False
@@ -111,32 +99,39 @@ if uploaded and run_match:
 
     result_df = pd.DataFrame(results)
 
-    st.success("✅ تمت المطابقة")
+    st.session_state["quotation"] = result_df
 
-    # =====================================
-    # EDITABLE TABLE
-    # =====================================
+# ============================
+# EDITABLE TABLE
+# ============================
 
-    st.subheader("✏️ تعديل النتائج")
+if "quotation" in st.session_state:
+
+    st.subheader("📋 نتائج المطابقة")
+
+    df = st.session_state["quotation"]
 
     edited_df = st.data_editor(
-        result_df,
-        num_rows="fixed",
-        use_container_width=True,
+        df,
         column_config={
             "Remarks": st.column_config.SelectboxColumn(
                 "Remarks",
-                options=master_items
+                options=master_items,
+                required=True
             ),
-            "Confirm": st.column_config.CheckboxColumn("Confirm"),
-            "Quantity": st.column_config.NumberColumn("Quantity", min_value=1),
-            "Price": st.column_config.NumberColumn("Price", min_value=0.0)
-        }
+            "Confirm": st.column_config.CheckboxColumn(
+                "Confirm"
+            )
+        },
+        use_container_width=True,
+        num_rows="fixed"
     )
 
-    # =====================================
-    # DOWNLOAD RESULT
-    # =====================================
+    st.session_state["quotation"] = edited_df
+
+    # ============================
+    # DOWNLOAD
+    # ============================
 
     buffer = io.BytesIO()
 
@@ -144,7 +139,7 @@ if uploaded and run_match:
         edited_df.to_excel(writer, index=False)
 
     st.download_button(
-        "⬇️ تحميل النتيجة Excel",
+        "⬇ تحميل ملف التسعير",
         buffer.getvalue(),
         file_name="quotation_result.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
