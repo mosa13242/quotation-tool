@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-from rapidfuzz import process, fuzz
+from rapidfuzz import fuzz
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Quotation Tool", layout="wide")
@@ -14,9 +14,12 @@ def clean_text(txt):
     txt = str(txt).lower()
     txt = re.sub(r"\(.*?\)", "", txt)
     txt = re.sub(r"[^a-z0-9\s]", " ", txt)
-    txt = re.sub(r"\b(tab|tablet|cap|capsule|ml|mg|pcs|packet|bottle|vial)\b", "", txt)
+    txt = re.sub(r"\b(tab|tablet|cap|capsule|ml|mg|pcs|packet|bottle|vial|amp)\b", "", txt)
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
+
+def word_set(txt):
+    return set(clean_text(txt).split())
 
 # ---------------- LOAD MASTER ----------------
 def load_master():
@@ -31,13 +34,12 @@ def load_master():
         st.error("❌ Master List لازم يحتوي Item و Price")
         st.stop()
 
-    df["clean"] = df["Item"].apply(clean_text)
+    df["words"] = df["Item"].apply(word_set)
 
     return df
 
 master_df = load_master()
 master_items = master_df["Item"].tolist()
-master_clean = master_df["clean"].tolist()
 
 # ---------------- TITLE ----------------
 st.title("📋 Smart Quotation Tool")
@@ -59,26 +61,33 @@ if uploaded:
 
     for item in req_df["Item"]:
 
-        cleaned = clean_text(item)
+        req_words = word_set(item)
 
-        matches = process.extract(
-            cleaned,
-            master_clean,
-            scorer=fuzz.token_sort_ratio,
-            limit=5
-        )
+        best_row = None
+        best_score = 0
 
-        best_clean, score, idx = matches[0]
-        best_item = master_df.iloc[idx]["Item"]
-        price = master_df.iloc[idx]["Price"]
+        for _, row in master_df.iterrows():
+
+            common_words = len(req_words & row["words"])
+
+            fuzzy_score = fuzz.token_sort_ratio(
+                clean_text(item),
+                clean_text(row["Item"])
+            )
+
+            final_score = common_words * 100 + fuzzy_score
+
+            if final_score > best_score:
+                best_score = final_score
+                best_row = row
 
         results.append({
             "Requested Item": item,
-            "Matched Item": best_item,
-            "Match Score": score,
+            "Matched Item": best_row["Item"],
+            "Match Score": best_score,
             "Quantity": 1,
-            "Price": price,
-            "Remarks": best_item
+            "Price": best_row["Price"],
+            "Remarks": best_row["Item"]
         })
 
     result_df = pd.DataFrame(results)
@@ -110,14 +119,12 @@ if uploaded:
             edited_df.at[i, "Remarks"] = row["Matched Item"]
 
     # ---------------- DOWNLOAD ----------------
-    st.subheader("⬇️ Download")
-
     out = "quotation_result.xlsx"
     edited_df.to_excel(out, index=False)
 
     with open(out, "rb") as f:
         st.download_button(
-            "تحميل ملف التسعير",
+            "⬇️ تحميل ملف التسعير",
             f,
             file_name="quotation_result.xlsx"
         )
