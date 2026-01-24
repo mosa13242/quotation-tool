@@ -2,20 +2,27 @@ import streamlit as st
 import pandas as pd
 import os
 
-st.title("📋 إدارة الماستر لست")
 MASTER_FILE = "master_list.xlsx"
 
-# إنشاء الملف تلقائياً إذا لم يكن موجوداً
-if not os.path.exists(MASTER_FILE):
-    pd.DataFrame(columns=["Item", "Price"]).to_excel(MASTER_FILE, index=False)
+st.title("📋 إدارة الماستر ليست")
 
-try:
-    df_master = pd.read_excel(MASTER_FILE)
-    # محرر بيانات بسيط لتجنب الأخطاء البرمجية
-    edited_master = st.data_editor(df_master, num_rows="dynamic", use_container_width=True)
-    
-    if st.button("💾 حفظ الماستر"):
-        edited_master.to_excel(MASTER_FILE, index=False)
-        st.success("تم الحفظ بنجاح!")
-except Exception as e:
-    st.error(f"خطأ في تحميل الماستر: {e}")
+uploaded = st.file_uploader(
+    "ارفع ملف الماستر ليست (Excel)",
+    type=["xlsx"]
+)
+
+if uploaded:
+    df = pd.read_excel(uploaded)
+    df.to_excel(MASTER_FILE, index=False)
+    st.success("✅ تم رفع الماستر ليست بنجاح")
+
+# تحميل الحالي لو موجود
+if os.path.exists(MASTER_FILE):
+    st.subheader("الماستر الحالي")
+    df = pd.read_excel(MASTER_FILE)
+
+    edited_df = st.data_editor(df, num_rows="dynamic")
+
+    if st.button("💾 حفظ التعديلات"):
+        edited_df.to_excel(MASTER_FILE, index=False)
+        st.success("تم حفظ التعديلات ✔️")
