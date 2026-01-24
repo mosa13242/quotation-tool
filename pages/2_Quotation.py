@@ -1,62 +1,33 @@
 import streamlit as st
 import pandas as pd
 from thefuzz import process
-import os
-from io import BytesIO
+import io
 
 st.set_page_config(layout="wide")
 
 st.title("💰 نظام التسعير والبحث الذكي")
 
-MASTER_FILE = "master_list.xlsx"
+# ============================
+# LOAD MASTER LIST
+# ============================
 
-# -------------------------------
-# LOAD MASTER
-# -------------------------------
+MASTER_FILE = "master_list.xlsx"
 
 @st.cache_data
 def load_master():
-    if not os.path.exists(MASTER_FILE):
-        return pd.DataFrame()
-    df = pd.read_excel(MASTER_FILE)
-    df.columns = df.columns.str.strip()
-    return df
+    return pd.read_excel(MASTER_FILE)
 
 master_df = load_master()
 
-if master_df.empty:
-    st.error("❌ الماستر ليست غير موجود")
-    st.stop()
+master_item_col = master_df.columns[0]
+master_price_col = master_df.columns[1]
 
-# -------------------------------
-# SELECT MASTER COLS
-# -------------------------------
-
-st.subheader("⚙️ إعدادات الماستر")
-
-c1, c2 = st.columns(2)
-
-with c1:
-    master_item_col = st.selectbox(
-        "📦 عمود الصنف",
-        master_df.columns
-    )
-
-with c2:
-    master_price_col = st.selectbox(
-        "💰 عمود السعر",
-        master_df.columns
-    )
-
-# -------------------------------
-# UPLOAD RFQ
-# -------------------------------
-
-st.divider()
-st.subheader("📤 ملف العميل")
+# ============================
+# UPLOAD FILE
+# ============================
 
 uploaded = st.file_uploader(
-    "ارفع ملف Excel",
+    "📤 ارفع ملف طلب العميل",
     type=["xlsx"]
 )
 
@@ -64,94 +35,121 @@ if not uploaded:
     st.stop()
 
 rfq_df = pd.read_excel(uploaded)
-rfq_df.columns = rfq_df.columns.str.strip()
 
-# -------------------------------
-# RFQ COLS
-# -------------------------------
+st.subheader("📄 معاينة الملف")
+st.dataframe(rfq_df.head())
 
-st.subheader("📑 أعمدة ملف العميل")
+# ============================
+# COLUMN MAPPING
+# ============================
 
-c1, c2 = st.columns(2)
+st.subheader("⚙️ ربط الأعمدة")
 
-with c1:
+col1, col2 = st.columns(2)
+
+with col1:
     rfq_item_col = st.selectbox(
-        "📦 عمود الصنف",
+        "عمود الصنف (طلب العميل)",
         rfq_df.columns
     )
 
-with c2:
+with col2:
     rfq_qty_col = st.selectbox(
-        "🔢 عمود الكمية",
+        "عمود الكمية",
         rfq_df.columns
     )
 
-# -------------------------------
-# MATCH BUTTON
-# -------------------------------
+if st.button("🔍 تنفيذ المطابقة الذكية"):
 
-if st.button("🔍 تنفيذ المطابقة"):
-
-    results = []
-
-    master_items = master_df[master_item_col].astype(str).tolist()
+    result_rows = []
 
     for _, row in rfq_df.iterrows():
 
-        item = str(row[rfq_item_col])
+        query = str(row[rfq_item_col])
 
-        match, score = process.extractOne(item, master_items)
+        match, score = process.extractOne(
+            query,
+            master_df[master_item_col].astype(str)
+        )
 
         price_row = master_df.loc[
             master_df[master_item_col] == match,
             master_price_col
         ]
 
-        price = float(price_row.values[0]) if not price_row.empty else 0
+        price = price_row.values[0] if not price_row.empty else 0
 
-        results.append({
-            "Requested Item": item,
+        result_rows.append({
+            "Requested Item": query,
             "Matched Item": match,
-            "Match Score": score,
+            "Score": score,
             "Quantity": row[rfq_qty_col],
-            "Price": price,
+            "Price": float(price),
             "Remarks": "",
             "Confirmed": False
         })
 
-    st.session_state["quotation_df"] = pd.DataFrame(results)
+    st.session_state["quotation_df"] = pd.DataFrame(result_rows)
 
-# -------------------------------
-# SHOW + EDIT
-# -------------------------------
+# ============================
+# SHOW RESULT
+# ============================
 
 if "quotation_df" in st.session_state:
 
     st.subheader("📊 نتائج المطابقة")
 
+    master_items = master_df[master_item_col].astype(str).tolist()
+
     edited_df = st.data_editor(
         st.session_state["quotation_df"],
-        num_rows="fixed",
         use_container_width=True,
+        num_rows="fixed",
         column_config={
-            "Confirmed": st.column_config.CheckboxColumn("Confirm Match"),
-            "Remarks": st.column_config.TextColumn("Remarks")
+            "Matched Item": st.column_config.SelectboxColumn(
+                "Matched Item",
+                options=master_items,
+                required=True
+            ),
+            "Confirmed": st.column_config.CheckboxColumn(
+                "Confirm"
+            ),
+            "Remarks": st.column_config.TextColumn(
+                "Remarks"
+            )
         }
     )
 
+    # ============================
+    # UPDATE PRICE WHEN ITEM CHANGES
+    # ============================
+
+    for idx, row in edited_df.iterrows():
+
+        item = row["Matched Item"]
+
+        price_row = master_df.loc[
+            master_df[master_item_col] == item,
+            master_price_col
+        ]
+
+        if not price_row.empty:
+            edited_df.at[idx, "Price"] = float(price_row.values[0])
+
     st.session_state["quotation_df"] = edited_df
 
-    # -------------------------------
-    # DOWNLOAD
-    # -------------------------------
+    # ============================
+    # DOWNLOAD RESULT
+    # ============================
 
-    buffer = BytesIO()
-    edited_df.to_excel(buffer, index=False)
-    buffer.seek(0)
+    buffer = io.BytesIO()
+
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        edited_df.to_excel(writer, index=False)
 
     st.download_button(
-        "⬇️ تحميل النتيجة",
-        data=buffer,
+        "⬇ تحميل نتيجة التسعير",
+        data=buffer.getvalue(),
         file_name="quotation_result.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
