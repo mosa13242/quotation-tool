@@ -33,12 +33,8 @@ def find_col(possible):
 ITEM_COL = find_col(["item", "product", "description", "name"])
 PRICE_COL = find_col(["price", "unit_price", "unit price", "cost", "selling"])
 
-if not ITEM_COL:
-    st.error("❌ الماستر لازم يحتوي على عمود Item")
-    st.stop()
-
-if not PRICE_COL:
-    st.error(f"❌ لا يوجد عمود سعر. الأعمدة: {list(master_df.columns)}")
+if not ITEM_COL or not PRICE_COL:
+    st.error("❌ الماستر لازم يحتوي على Item و Price")
     st.stop()
 
 master_items = master_df[ITEM_COL].astype(str).tolist()
@@ -66,7 +62,7 @@ item_col = st.selectbox("عمود الصنف", rfq_df.columns)
 qty_col = st.selectbox("عمود الكمية", rfq_df.columns)
 
 # ============================
-# MATCH BUTTON
+# MATCH
 # ============================
 
 if st.button("🔍 تنفيذ المطابقة الذكية"):
@@ -97,12 +93,10 @@ if st.button("🔍 تنفيذ المطابقة الذكية"):
             "Confirm": False
         })
 
-    result_df = pd.DataFrame(results)
-
-    st.session_state["quotation"] = result_df
+    st.session_state["quotation"] = pd.DataFrame(results)
 
 # ============================
-# EDITABLE TABLE
+# EDIT TABLE WITH SEARCHABLE REMARKS
 # ============================
 
 if "quotation" in st.session_state:
@@ -113,18 +107,17 @@ if "quotation" in st.session_state:
 
     edited_df = st.data_editor(
         df,
+        use_container_width=True,
+        num_rows="fixed",
         column_config={
             "Remarks": st.column_config.SelectboxColumn(
-                "Remarks",
+                label="Remarks",
                 options=master_items,
-                required=True
+                help="اكتب أول حرفين للبحث في الماستر",
+                required=True,
             ),
-            "Confirm": st.column_config.CheckboxColumn(
-                "Confirm"
-            )
-        },
-        use_container_width=True,
-        num_rows="fixed"
+            "Confirm": st.column_config.CheckboxColumn("Confirm"),
+        }
     )
 
     st.session_state["quotation"] = edited_df
@@ -134,7 +127,6 @@ if "quotation" in st.session_state:
     # ============================
 
     buffer = io.BytesIO()
-
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         edited_df.to_excel(writer, index=False)
 
