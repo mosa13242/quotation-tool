@@ -144,9 +144,10 @@ if "quotation_df" in st.session_state:
 
     buffer = io.BytesIO()
 
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        edited_df.to_excel(writer, index=False)
+with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    edited_df.to_excel(writer, index=False)
 
+buffer.seek(0)
     st.download_button(
         "⬇ تحميل نتيجة التسعير",
         data=buffer.getvalue(),
