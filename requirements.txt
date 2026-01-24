@@ -1,5 +1,6 @@
+streamlit==1.19.0
 pandas
-streamlit
-thefuzz
 openpyxl
-xlsxwriter
+thefuzz
+python-Levenshtein
+altair
