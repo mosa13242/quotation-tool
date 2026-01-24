@@ -1,138 +1,182 @@
 import streamlit as st
 import pandas as pd
+import re
+from thefuzz import process, fuzz
 import io
-from thefuzz import process
 
 st.set_page_config(page_title="Quotation Tool", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
 
-# ============================
-# LOAD MASTER
-# ============================
+# ----------------------------
+# Load Master
+# ----------------------------
 
 @st.cache_data
 def load_master():
     df = pd.read_excel(MASTER_FILE)
-    df.columns = [c.strip() for c in df.columns]
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    required = {"item", "price", "unit_price"}
+    if not required.issubset(df.columns):
+        st.error(f"❌ Master must contain columns: {required}")
+        st.stop()
+
     return df
 
+
 master_df = load_master()
+master_items = master_df["item"].astype(str).tolist()
 
-# ============================
-# AUTO COLUMN DETECT
-# ============================
+# ----------------------------
+# Cleaning
+# ----------------------------
 
-def find_col(possible):
-    for name in possible:
-        for col in master_df.columns:
-            if name.lower() == col.lower():
-                return col
-    return None
+IGNORE_WORDS = {
+    "mg","ml","tab","tabs","tablet","tablets","syrup","cream",
+    "cap","capsule","amp","ampoule","vial","inj","solution",
+    "pcs","packet","bottle","drop","drops"
+}
 
-ITEM_COL = find_col(["item", "product", "description", "name"])
-PRICE_COL = find_col(["price", "unit_price", "unit price", "cost", "selling"])
+def normalize(text):
+    text = str(text).lower()
+    text = re.sub(r"[^a-z0-9 ]", " ", text)
 
-if not ITEM_COL or not PRICE_COL:
-    st.error("❌ الماستر لازم يحتوي على Item و Price")
-    st.stop()
+    tokens = []
+    for t in text.split():
+        if t not in IGNORE_WORDS and not t.isdigit():
+            tokens.append(t)
 
-master_items = master_df[ITEM_COL].astype(str).tolist()
+    return " ".join(tokens)
 
-# ============================
+master_df["norm"] = master_df["item"].apply(normalize)
+
+# ----------------------------
+# Matching Engine
+# ----------------------------
+
+def smart_match(query):
+    q_norm = normalize(query)
+
+    # exact word overlap score
+    best = None
+    best_score = 0
+
+    for _, row in master_df.iterrows():
+        m_norm = row["norm"]
+
+        q_words = set(q_norm.split())
+        m_words = set(m_norm.split())
+
+        if not q_words:
+            continue
+
+        overlap = len(q_words & m_words) / len(q_words)
+
+        fuzzy_score = fuzz.token_set_ratio(q_norm, m_norm) / 100
+
+        score = overlap * 0.7 + fuzzy_score * 0.3
+
+        if score > best_score:
+            best_score = score
+            best = row
+
+    return best, round(best_score * 100)
+
+
+# ----------------------------
 # UI
-# ============================
+# ----------------------------
 
 st.title("📊 Quotation Tool")
 
-uploaded_file = st.file_uploader(
-    "📤 ارفع ملف الطلب (Excel)",
-    type=["xlsx"]
-)
+uploaded = st.file_uploader("📄 ارفع ملف الطلب (Excel)", type=["xlsx"])
 
-if not uploaded_file:
-    st.stop()
+if uploaded:
 
-rfq_df = pd.read_excel(uploaded_file)
-rfq_df.columns = [c.strip() for c in rfq_df.columns]
+    req_df = pd.read_excel(uploaded)
+    req_df.columns = [c.strip() for c in req_df.columns]
 
-st.subheader("⚙️ اختار الأعمدة")
+    item_col = st.selectbox("عمود الصنف", req_df.columns)
+    qty_col = st.selectbox("عمود الكمية", req_df.columns)
 
-item_col = st.selectbox("عمود الصنف", rfq_df.columns)
-qty_col = st.selectbox("عمود الكمية", rfq_df.columns)
+    if st.button("🔍 تنفيذ المطابقة الذكية"):
 
-# ============================
-# MATCH
-# ============================
+        rows = []
 
-if st.button("🔍 تنفيذ المطابقة الذكية"):
+        for _, r in req_df.iterrows():
+            item = str(r[item_col])
+            qty = r[qty_col]
 
-    results = []
+            match, score = smart_match(item)
 
-    for _, row in rfq_df.iterrows():
+            if match is not None:
+                rows.append({
+                    "Requested Item": item,
+                    "Matched Item": match["item"],
+                    "Match Score": score,
+                    "Quantity": qty,
+                    "Price": match["price"],
+                    "Remarks": match["item"]
+                })
+            else:
+                rows.append({
+                    "Requested Item": item,
+                    "Matched Item": "",
+                    "Match Score": 0,
+                    "Quantity": qty,
+                    "Price": 0,
+                    "Remarks": ""
+                })
 
-        query = str(row[item_col])
+        result_df = pd.DataFrame(rows)
 
-        match, score = process.extractOne(query, master_items)
+        st.session_state["quotation"] = result_df
 
-        price_row = master_df[master_df[ITEM_COL] == match]
 
-        price = (
-            price_row[PRICE_COL].values[0]
-            if not price_row.empty
-            else 0
-        )
-
-        results.append({
-            "Requested Item": query,
-            "Matched Item": match,
-            "Match Score": score,
-            "Quantity": row[qty_col],
-            "Price": price,
-            "Remarks": match,
-            "Confirm": False
-        })
-
-    st.session_state["quotation"] = pd.DataFrame(results)
-
-# ============================
-# EDIT TABLE WITH SEARCHABLE REMARKS
-# ============================
+# ----------------------------
+# Results Table
+# ----------------------------
 
 if "quotation" in st.session_state:
 
-    st.subheader("📋 نتائج المطابقة")
-
     df = st.session_state["quotation"]
 
-    edited_df = st.data_editor(
+    st.subheader("📋 نتائج المطابقة")
+
+    edited = st.data_editor(
         df,
-        use_container_width=True,
-        num_rows="fixed",
+        num_rows="dynamic",
         column_config={
-            "Remarks": st.column_config.SelectboxColumn(
-                label="Remarks",
-                options=master_items,
-                help="اكتب أول حرفين للبحث في الماستر",
-                required=True,
-            ),
-            "Confirm": st.column_config.CheckboxColumn("Confirm"),
-        }
+            "Matched Item": st.column_config.SelectboxColumn(
+                options=master_items
+            )
+        },
+        use_container_width=True
     )
 
-    st.session_state["quotation"] = edited_df
+    # update price if changed
+    for i, row in edited.iterrows():
+        m = row["Matched Item"]
+        price_row = master_df[master_df["item"] == m]
 
-    # ============================
-    # DOWNLOAD
-    # ============================
+        if not price_row.empty:
+            edited.loc[i, "Price"] = price_row["price"].values[0]
+
+    st.session_state["quotation"] = edited
+
+    # ----------------------------
+    # Export
+    # ----------------------------
 
     buffer = io.BytesIO()
+
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        edited_df.to_excel(writer, index=False)
+        edited.to_excel(writer, index=False)
 
     st.download_button(
         "⬇ تحميل ملف التسعير",
-        buffer.getvalue(),
-        file_name="quotation_result.xlsx",
+        data=buffer.getvalue(),
+        file_name="quotation.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
