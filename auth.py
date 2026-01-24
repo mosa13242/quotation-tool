@@ -1,45 +1,51 @@
 import streamlit as st
 import hashlib
 
-# ---- Simple in-memory users (later we can move to DB) ----
+# ================================
+# USERS (غيرهم براحتك)
+# ================================
+
 USERS = {
-    "admin": "admin123",   # change later
+    "admin": "admin123",
+    "sales": "1234",
 }
 
-# Hash password
-def hash_password(password: str) -> str:
+# ================================
+def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-# Prepare hashed users
 HASHED_USERS = {u: hash_password(p) for u, p in USERS.items()}
 
 
-def login_form():
-    st.subheader("🔐 Login")
+# ================================
+def require_login():
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
 
-    if st.button("Login"):
-        if username in HASHED_USERS:
-            if hash_password(password) == HASHED_USERS[username]:
-                st.session_state["authenticated"] = True
-                st.session_state["user"] = username
-                st.success("✅ Logged in successfully")
+    if not st.session_state.logged_in:
+
+        st.title("🔐 Login")
+
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+
+            if username in HASHED_USERS and hash_password(password) == HASHED_USERS[username]:
+                st.session_state.logged_in = True
+                st.session_state.user = username
                 st.rerun()
             else:
-                st.error("❌ Wrong password")
-        else:
-            st.error("❌ User not found")
+                st.error("❌ Wrong username or password")
 
-
-def logout_button():
-    if st.button("Logout"):
-        st.session_state.clear()
-        st.rerun()
-
-
-def require_login():
-    if not st.session_state.get("authenticated"):
-        login_form()
         st.stop()
+
+
+# ================================
+def logout_button():
+
+    if st.sidebar.button("🚪 Logout"):
+        st.session_state.logged_in = False
+        st.session_state.user = None
+        st.rerun()
