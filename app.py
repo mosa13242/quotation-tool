@@ -1,12 +1,22 @@
 import streamlit as st
 import pandas as pd
 import os
-from thefuzz import process
+import re
+from rapidfuzz import process, fuzz
 
-# ---------------- SETTINGS ----------------
+# ---------------- CONFIG ----------------
 st.set_page_config(page_title="Quotation Tool", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
+
+# ---------------- CLEAN TEXT ----------------
+def clean_text(txt):
+    txt = str(txt).lower()
+    txt = re.sub(r"\(.*?\)", "", txt)
+    txt = re.sub(r"[^a-z0-9\s]", " ", txt)
+    txt = re.sub(r"\b(tab|tablet|cap|capsule|ml|mg|pcs|packet|bottle|vial)\b", "", txt)
+    txt = re.sub(r"\s+", " ", txt)
+    return txt.strip()
 
 # ---------------- LOAD MASTER ----------------
 def load_master():
@@ -18,16 +28,19 @@ def load_master():
     df.columns = [c.strip() for c in df.columns]
 
     if "Item" not in df.columns or "Price" not in df.columns:
-        st.error("❌ Master List لازم يحتوي على Item و Price")
+        st.error("❌ Master List لازم يحتوي Item و Price")
         st.stop()
+
+    df["clean"] = df["Item"].apply(clean_text)
 
     return df
 
 master_df = load_master()
-master_items = master_df["Item"].astype(str).tolist()
+master_items = master_df["Item"].tolist()
+master_clean = master_df["clean"].tolist()
 
 # ---------------- TITLE ----------------
-st.title("📋 Quotation Tool")
+st.title("📋 Smart Quotation Tool")
 
 uploaded = st.file_uploader("📤 ارفع ملف الطلب", type=["xlsx"])
 
@@ -40,38 +53,44 @@ if uploaded:
         st.error("❌ ملف الطلب لازم يحتوي عمود Item")
         st.stop()
 
-    st.subheader("🔎 تنفيذ المطابقة الذكية")
+    st.subheader("🔍 Smart Matching")
 
     results = []
 
     for item in req_df["Item"]:
 
-        match, score = process.extractOne(item, master_items)
+        cleaned = clean_text(item)
 
-        price_row = master_df[master_df["Item"] == match]
+        matches = process.extract(
+            cleaned,
+            master_clean,
+            scorer=fuzz.token_sort_ratio,
+            limit=5
+        )
 
-        price = price_row["Price"].values[0] if not price_row.empty else 0
+        best_clean, score, idx = matches[0]
+        best_item = master_df.iloc[idx]["Item"]
+        price = master_df.iloc[idx]["Price"]
 
         results.append({
             "Requested Item": item,
-            "Matched Item": match,
+            "Matched Item": best_item,
             "Match Score": score,
             "Quantity": 1,
             "Price": price,
-            "Remarks": match
+            "Remarks": best_item
         })
 
     result_df = pd.DataFrame(results)
 
-    st.subheader("📊 نتائج المطابقة")
+    st.subheader("📊 Results")
 
     edited_df = st.data_editor(
         result_df,
         column_config={
             "Matched Item": st.column_config.SelectboxColumn(
                 "Matched Item",
-                options=master_items,
-                required=True
+                options=master_items
             ),
             "Quantity": st.column_config.NumberColumn(
                 "Quantity",
@@ -79,25 +98,26 @@ if uploaded:
                 step=1
             )
         },
-        use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        use_container_width=True
     )
 
-    # ---------------- UPDATE PRICE WHEN ITEM CHANGES ----------------
+    # ---------------- UPDATE PRICE ----------------
     for i, row in edited_df.iterrows():
         price_row = master_df[master_df["Item"] == row["Matched Item"]]
         if not price_row.empty:
             edited_df.at[i, "Price"] = price_row["Price"].values[0]
             edited_df.at[i, "Remarks"] = row["Matched Item"]
 
-    st.subheader("⬇️ تحميل ملف التسعير")
+    # ---------------- DOWNLOAD ----------------
+    st.subheader("⬇️ Download")
 
-    output_file = "quotation_result.xlsx"
-    edited_df.to_excel(output_file, index=False)
+    out = "quotation_result.xlsx"
+    edited_df.to_excel(out, index=False)
 
-    with open(output_file, "rb") as f:
+    with open(out, "rb") as f:
         st.download_button(
-            "تحميل Excel النهائي",
+            "تحميل ملف التسعير",
             f,
             file_name="quotation_result.xlsx"
         )
