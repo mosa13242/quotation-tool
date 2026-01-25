@@ -153,11 +153,19 @@ if uploaded and not master_df.empty:
 
         edited["Price"] = prices
 
-        st.download_button(
-            "Download Quotation",
-            edited.to_excel(index=False),
-            file_name="quotation.xlsx"
-        )
+        import io
+
+output = io.BytesIO()
+
+with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+    edited.to_excel(writer, index=False)
+
+st.download_button(
+    label="📥 تحميل ملف التسعير",
+    data=output.getvalue(),
+    file_name="quotation_result.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
 
 elif master_df.empty:
