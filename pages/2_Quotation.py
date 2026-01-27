@@ -1,125 +1,107 @@
 import streamlit as st
 import pandas as pd
 import os
-import io
-
-st.set_page_config(page_title="Quotation Tool", layout="wide")
 
 MASTER_FILE = "master_list.xlsx"
 
-st.title("📊 Quotation Tool")
-st.subheader("Quotation Matching System")
+st.set_page_config(page_title="Quotation", layout="wide")
 
-# =============================
-# Load Master List
-# =============================
+# -----------------------------
+# تحميل الماستر ليست مع تنظيف الأعمدة
+# -----------------------------
 
-@st.cache_data
-def load_master():
+def load_master_safe():
     if not os.path.exists(MASTER_FILE):
-        return pd.DataFrame(columns=["Item", "unit_price"])
+        df = pd.DataFrame(columns=["item", "unit_price"])
+        df.to_excel(MASTER_FILE, index=False)
+        return df, []
 
     df = pd.read_excel(MASTER_FILE)
-    df.columns = [c.strip().lower() for c in df.columns]
-    return df
+
+    # تنظيف أسماء الأعمدة
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+    )
+
+    return df, df["item"].astype(str).tolist() if "item" in df.columns else []
 
 
-master_df = load_master()
+master_df, master_items = load_master_safe()
 
-# =============================
-# Upload RFQ File
-# =============================
+st.title("🧾 Quotation Generator")
 
-uploaded_file = st.file_uploader(
-    "📄 ارفع ملف الطلب",
-    type=["xlsx"]
-)
+# -----------------------------
+# تأكيد الأعمدة المطلوبة
+# -----------------------------
 
-if uploaded_file:
+required_cols = ["item", "unit_price"]
 
-    rfq_df = pd.read_excel(uploaded_file)
-    rfq_df.columns = [c.strip().lower() for c in rfq_df.columns]
+missing = [c for c in required_cols if c not in master_df.columns]
 
-    st.success("✅ تم رفع الملف")
+if missing:
+    st.error(f"❌ الأعمدة التالية غير موجودة في master_list.xlsx: {missing}")
+    st.write("📌 الأعمدة الموجودة:")
+    st.write(master_df.columns.tolist())
+    st.stop()
 
+# -----------------------------
+# رفع ملف RFQ
+# -----------------------------
+
+rfq_file = st.file_uploader("📤 Upload RFQ Excel", type=["xlsx"])
+
+if rfq_file:
+
+    rfq_df = pd.read_excel(rfq_file)
+
+    rfq_df.columns = (
+        rfq_df.columns
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+    )
+
+    st.subheader("RFQ Preview")
     st.dataframe(rfq_df)
 
-    # =============================
-    # Choose Column
-    # =============================
+    item_col = st.selectbox("📦 اختر عمود الصنف", rfq_df.columns)
+    qty_col = st.selectbox("📊 اختر عمود الكمية", rfq_df.columns)
 
-    col1, col2 = st.columns(2)
+    if st.button("🚀 Generate Quotation"):
 
-    with col1:
-        item_col = st.selectbox(
-            "📝 اختر عمود اسم الصنف",
-            rfq_df.columns
-        )
-
-    with col2:
-        qty_col = st.selectbox(
-            "📦 اختر عمود الكمية",
-            rfq_df.columns
-        )
-
-    # =============================
-    # Run Pricing
-    # =============================
-
-    if st.button("🚀 تشغيل التسعير"):
-
-        results = []
-
-        master_items = master_df["item"].astype(str).str.upper().str.strip()
         price_map = dict(
-            zip(master_items, master_df["unit_price"])
+            zip(master_df["item"].astype(str), master_df["unit_price"])
         )
 
-        for _, row in rfq_df.iterrows():
+        rfq_df["item_clean"] = rfq_df[item_col].astype(str)
 
-            name = str(row[item_col]).upper().strip()
-            qty = row[qty_col]
+        rfq_df["unit_price"] = rfq_df["item_clean"].map(price_map)
 
-            if name in price_map:
-                price = price_map[name]
-                score = 100
-                remark = name
-            else:
-                price = ""
-                score = 0
-                remark = "NO MATCH"
+        missing_items = rfq_df[rfq_df["unit_price"].isna()]
 
-            results.append({
-                "Requested Item": name,
-                "Matched Item": remark,
-                "Match Score": score,
-                "Quantity": qty,
-                "Price": price,
-                "Total": price * qty if price != "" else "",
-                "Remarks": remark
-            })
+        if not missing_items.empty:
+            st.warning("⚠ بعض الأصناف غير موجودة في الماستر ليست:")
+            st.dataframe(missing_items[[item_col]])
+            st.stop()
 
-        edited = pd.DataFrame(results)
+        rfq_df["quantity"] = rfq_df[qty_col]
+        rfq_df["total"] = rfq_df["quantity"] * rfq_df["unit_price"]
 
-        st.divider()
-        st.subheader("📋 Results")
+        st.success("✅ Quotation Generated Successfully")
 
-        st.dataframe(edited, use_container_width=True)
-
-        # =============================
-        # Download Excel
-        # =============================
-
-        output = io.BytesIO()
-
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            edited.to_excel(writer, index=False)
+        st.dataframe(
+            rfq_df[[item_col, "quantity", "unit_price", "total"]]
+        )
 
         st.download_button(
-            label="📥 تحميل ملف التسعير",
-            data=output.getvalue(),
-            file_name="quotation_result.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "⬇ Download Quotation Excel",
+            rfq_df[[item_col, "quantity", "unit_price", "total"]]
+            .to_excel(index=False),
+            file_name="quotation.xlsx"
         )
-
 
