@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
 import os
+import difflib
 
 MASTER_FILE = "master_list.xlsx"
 
-st.set_page_config(page_title="Master List", layout="wide")
+st.set_page_config(page_title="Quotation", layout="wide")
 
-st.title("📦 Master List Manager")
+st.title("🧾 Quotation Generator")
 
-# -------------------------
-# Load or create master
-# -------------------------
+# -----------------------------
+# Load Master List
+# -----------------------------
 
 def load_master():
     if not os.path.exists(MASTER_FILE):
@@ -32,61 +33,95 @@ def load_master():
 
 master_df = load_master()
 
-# -------------------------
-# Display + edit
-# -------------------------
+if master_df.empty:
+    st.error("❌ Master List فارغة — أضف أصناف وأسعار أولاً.")
+    st.stop()
 
-st.subheader("📋 Current Items")
+master_items = master_df["item"].astype(str).tolist()
 
-edited_df = st.data_editor(
-    master_df,
-    num_rows="dynamic",
-    use_container_width=True
-)
+# -----------------------------
+# Upload RFQ
+# -----------------------------
 
-# -------------------------
-# Save changes
-# -------------------------
+rfq_file = st.file_uploader("📤 Upload RFQ Excel", type=["xlsx"])
 
-if st.button("💾 Save Master List"):
-    edited_df.to_excel(MASTER_FILE, index=False)
-    st.success("Master list saved successfully ✅")
+if rfq_file:
 
-# -------------------------
-# Upload replace
-# -------------------------
+    rfq_df = pd.read_excel(rfq_file)
 
-st.divider()
-st.subheader("📤 Upload new master list")
-
-uploaded = st.file_uploader("Upload Excel", type=["xlsx"])
-
-if uploaded:
-    new_df = pd.read_excel(uploaded)
-
-    new_df.columns = (
-        new_df.columns.astype(str)
+    rfq_df.columns = (
+        rfq_df.columns.astype(str)
         .str.strip()
         .str.lower()
         .str.replace(" ", "_")
     )
 
-    if not {"item", "price"}.issubset(new_df.columns):
-        st.error("❌ Excel must contain columns: item, price")
-    else:
-        new_df.to_excel(MASTER_FILE, index=False)
-        st.success("Master list replaced ✅")
-        st.rerun()
+    st.subheader("RFQ Preview")
+    st.dataframe(rfq_df)
 
-# -------------------------
-# Download backup
-# -------------------------
+    item_col = st.selectbox("📦 اختر عمود الصنف", rfq_df.columns)
+    qty_col = st.selectbox("📊 اختر عمود الكمية", rfq_df.columns)
 
-st.divider()
+    if st.button("🚀 Generate Pricing"):
 
-with open(MASTER_FILE, "rb") as f:
-    st.download_button(
-        "⬇ Download Master Backup",
-        f,
-        file_name="master_list.xlsx"
-    )
+        rows = []
+
+        for _, row in rfq_df.iterrows():
+
+            rfq_item = str(row[item_col])
+
+            matches = difflib.get_close_matches(
+                rfq_item,
+                master_items,
+                n=1,
+                cutoff=0.4
+            )
+
+            matched_item = matches[0] if matches else ""
+            price = None
+
+            if matched_item:
+                price = master_df.loc[
+                    master_df["item"] == matched_item,
+                    "price"
+                ].values[0]
+
+            rows.append({
+                "rfq_item": rfq_item,
+                "matched_item": matched_item,
+                "quantity": row[qty_col],
+                "price": price,
+            })
+
+        result_df = pd.DataFrame(rows)
+
+        # Calculate total
+        result_df["total"] = (
+            pd.to_numeric(result_df["quantity"], errors="coerce")
+            * pd.to_numeric(result_df["price"], errors="coerce")
+        )
+
+        st.subheader("✍ Editable Pricing Table")
+
+        edited_df = st.data_editor(
+            result_df,
+            num_rows="dynamic",
+            use_container_width=True
+        )
+
+        # Recalculate after edits
+        edited_df["total"] = (
+            pd.to_numeric(edited_df["quantity"], errors="coerce")
+            * pd.to_numeric(edited_df["price"], errors="coerce")
+        )
+
+        st.success("✅ Pricing ready")
+
+        st.dataframe(edited_df)
+
+        # Download Excel
+        st.download_button(
+            "⬇ Download Quotation Excel",
+            edited_df.to_excel(index=False),
+            file_name="quotation.xlsx"
+        )
