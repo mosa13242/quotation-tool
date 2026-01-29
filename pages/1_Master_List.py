@@ -1,39 +1,35 @@
 import streamlit as st
 import pandas as pd
 import os
-import io
 
-st.set_page_config(page_title="إدارة الماستر", layout="wide")
-st.title("📋 إدارة وتحميل الماستر لست")
+st.title("📋 إدارة الماستر لست")
 
 MASTER_FILE = "master_list.xlsx"
 
-# إنشاء الملف فوراً إذا لم يكن موجوداً لضمان عدم تعليق الصفحة
-if not os.path.exists(MASTER_FILE):
-    pd.DataFrame(columns=["Item", "Price"]).to_excel(MASTER_FILE, index=False)
+# 1. خانة رفع ملف الماستر (لتعبئة القائمة لأول مرة)
+st.subheader("📤 رفع قاعدة بيانات جديدة")
+uploaded_master = st.file_uploader("ارفع ملف الإكسيل الذي يحتوي على الأصناف والأسعار:", type=["xlsx"], key="master_upload")
 
-try:
-    # قراءة البيانات مع استثناء الأخطاء
-    df_master = pd.read_excel(MASTER_FILE)
-    
-    st.write("أضف بياناتك هنا (اضغط على + لإضافة صنف جديد):")
-    # جدول تعديل مستقر
-    edited_df = st.data_editor(df_master, num_rows="dynamic", use_container_width=True, key="master_stable_v12")
-    
-    if st.button("💾 حفظ التعديلات"):
-        edited_df.to_excel(MASTER_FILE, index=False)
-        st.success("✅ تم الحفظ بنجاح في ملف master_list.xlsx")
-            
-    # زر تحميل احتياطي بسيط جداً
-    buffer = io.BytesIO()
-    edited_df.to_excel(buffer, index=False)
-    st.download_button(
-        label="📥 تحميل الماستر (Excel)",
-        data=buffer.getvalue(),
-        file_name="master_list.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+if uploaded_master:
+    df_new = pd.read_excel(uploaded_master)
+    df_new.to_excel(MASTER_FILE, index=False)
+    st.success("✅ تم تحديث الماستر لست بنجاح من الملف المرفوع!")
 
-except Exception as e:
-    st.error(f"⚠️ هناك مشكلة في المكتبات البرمجية على السيرفر: {e}")
+st.markdown("---")
+
+# 2. عرض وتعديل الماستر الحالي
+st.subheader("📝 تعديل الأصناف الحالية")
+if os.path.exists(MASTER_FILE):
+    try:
+        df = pd.read_excel(MASTER_FILE)
+        # محرر بيانات بسيط ومستقر
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="master_editor_vFinal")
+        
+        if st.button("💾 حفظ التعديلات اليدوية"):
+            edited_df.to_excel(MASTER_FILE, index=False)
+            st.success("✅ تم حفظ التعديلات!")
+    except Exception as e:
+        st.error(f"خطأ في عرض البيانات: {e}")
+else:
+    st.info("الماستر فارغ حالياً. يمكنك الرفع من الخانة أعلاه أو إضافة صنف يدوياً.")
 
